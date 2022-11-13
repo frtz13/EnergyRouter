@@ -14,7 +14,7 @@ CONFIGSECTION_MQTT = "mqtt"
 CONFIGSECTION_GRID = "grid"
 CONFIGSECTION_DIMMER = "dimmer"
 
-MQTT_TOPIC_LWT = "LWT"
+MQTT_TOPIC_LWT = "RouterLWT"
 MQTT_PAYLOAD_ONLINE = "online"
 MQTT_PAYLOAD_OFFLINE = "offline"
 
@@ -116,7 +116,7 @@ def MQTT_connect(client):
 def MQTT_terminate(client):
     try:
         if client.connected_flag:
-            res = MQTT_client.publish(MQTT_TOPIC_DIMMER_ROOT + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
+            res = MQTT_client.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
 #            if res[0] == 0:
 #                print("mqtt go offline ok")
             MQTT_client.disconnect()
@@ -155,7 +155,6 @@ class Router:
         self._cnt_set_dimmer = 0
         self._last_dimmerload = -1
 
-
     def set_power(self, mode, gridpower):
         if mode == ROUTERMODE_AUTO:
             self._set_power_auto(gridpower)
@@ -182,7 +181,6 @@ class Router:
             self._setdimmer(_dimmerload)
             self._publish_status(gridpower, _dimmerload, pDiff, iDiff)
 
-
     def _setdimmer(self, dimmerload):
 #   only publish every 10th dimmerload value, unless its value changes
         CNT_MAX = 10
@@ -200,7 +198,6 @@ class Router:
                 self._cnt_set_dimmer += 1
         except:
             pass
-
 
     def _publish_status(self, lastPower, dimmerLoad, pDiff, iDiff):
     # publish current gridpower, dimmersetting, _dimmersum
@@ -225,6 +222,7 @@ class Router:
     def switch_off(self):
         self._setdimmer(0)
         return
+
 
 class GridPower:
     def __init__(self):
@@ -251,6 +249,7 @@ class GridPower:
         else:
             return self._arr_gridpower[-1]
 
+
 class RouterMode:
     # supported modes: -1 (Auto), 0 (off), 1..100 (constant value)
     def __init__(self):
@@ -265,6 +264,7 @@ class RouterMode:
     @property
     def current_mode(self):
         return self._current_mode
+
 
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
