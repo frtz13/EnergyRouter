@@ -7,28 +7,30 @@ import json
 from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221110"
+SCRIPT_VERSION = "20221113"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_MQTT = "mqtt"
 CONFIGSECTION_GRID = "grid"
 CONFIGSECTION_DIMMER = "dimmer"
 
-MQTT_TOPIC_LWT = "/LWT"
+MQTT_TOPIC_LWT = "LWT"
 MQTT_PAYLOAD_ONLINE = "online"
 MQTT_PAYLOAD_OFFLINE = "offline"
 
+ROUTERMODE_AUTO = -1
 
 def read_config():
     global MQTT_BROKER
     global MQTT_PORT
     global MQTT_USERNAME
     global MQTT_PASSWORD
-    global MQTT_TOPIC
     global MQTT_TOPIC_GRIDPOWER
     global MQTT_TOPIC_DIMMER_ROOT
     global MQTT_TOPIC_DIMMER_POWER
     global MQTT_TOPIC_DIMMER_STATUS
+    global MAX_DIMMER_POURCENTAGE
+    global MQTT_TOPIC_ROUTERMODE
 
     try:
         confparser = configparser.RawConfigParser()
@@ -38,13 +40,14 @@ def read_config():
         MQTT_PORT = int(confparser.get(CONFIGSECTION_MQTT, "TCP_PORT"))
         MQTT_USERNAME = confparser.get(CONFIGSECTION_MQTT, "USERNAME")
         MQTT_PASSWORD = confparser.get(CONFIGSECTION_MQTT, "PASSWORD")
-        MQTT_TOPIC = confparser.get(CONFIGSECTION_MQTT, "TOPIC")
 
         MQTT_TOPIC_GRIDPOWER = confparser.get(CONFIGSECTION_GRID, "MQTT_TOPIC_GRIDPOWER")
 
         MQTT_TOPIC_DIMMER_ROOT = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ROOT")
         MQTT_TOPIC_DIMMER_POWER = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_POWER")
         MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_STATUS")
+        MAX_DIMMER_POURCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_POURCENTAGE"))
+        MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
 
         return True
     except Exception as e:
@@ -59,7 +62,7 @@ def on_MQTTconnect(client, userdata, flags, rc):
         client.connected_flag = True
 #       print("connected OK")
         try:
-            client.publish(MQTT_TOPIC + MQTT_TOPIC_LWT, MQTT_PAYLOAD_ONLINE, 0, retain=True)
+            client.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_ONLINE, 0, retain=True)
         except:
             pass
     else:
@@ -82,7 +85,9 @@ def MQTT_connect(client):
     client.on_connect = on_MQTTconnect
     client.on_disconnect = on_MQTTdisconnect
     client.on_message = on_message
-    client.will_set(MQTT_TOPIC + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
+    client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
+    client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, on_message_routermode)
+    client.will_set(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
     if len(MQTT_USERNAME) > 0:
         client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
 #    print("Connecting to broker ",MQTT_BROKER)
@@ -98,10 +103,11 @@ def MQTT_connect(client):
             break
         time.sleep(1)
     if client.connected_flag:
-        subscr_result = client.subscribe(MQTT_TOPIC_GRIDPOWER)
-        if subscr_result[0] == 0:
-            client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
-        else:
+        subscr_result = client.subscribe([
+            (MQTT_TOPIC_GRIDPOWER,0),
+            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0)
+        ])
+        if subscr_result[0] != 0:
             print("[error] mqtt subscription failed: " + subscr_result[0])
         return True
     else:
@@ -110,7 +116,7 @@ def MQTT_connect(client):
 def MQTT_terminate(client):
     try:
         if client.connected_flag:
-            res = MQTT_client.publish(MQTT_TOPIC + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
+            res = MQTT_client.publish(MQTT_TOPIC_DIMMER_ROOT + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
 #            if res[0] == 0:
 #                print("mqtt go offline ok")
             MQTT_client.disconnect()
@@ -130,39 +136,68 @@ def on_message_gridpower(client, userdata, msg):
     gridpower.addvalue(float(msg.payload))
     cntupdavg = 0
 
+def on_message_routermode(client, userdata, msg):
+    global routermode
+    routermode.set_mode(msg.payload)
+
+def inbetween(minv, val, maxv):
+    return min(maxv, max(minv, val))
+
 
 class Router:
-    def __init__(self, mqttclient):
+    def __init__(self, mqttclient, maxdimmerpourcentage):
         self._routersum = 0
         self._prop = 0.03
         self._integ = 0.02
-        self._maxdimmerpourcentage = 60
+        self._maxdimmerpourcentage = maxdimmerpourcentage
         self._mqttclient = mqttclient
         self._cnt_publish_status = 0
+        self._cnt_set_dimmer = 0
+        self._last_dimmerload = -1
 
-    def set_power(self, lastPower):
-        if lastPower is None:
+
+    def set_power(self, mode, gridpower):
+        if mode == ROUTERMODE_AUTO:
+            self._set_power_auto(gridpower)
+        else:
+           _dimmerload = inbetween(0, mode, 100)
+           self._setdimmer(_dimmerload)
+
+    def _set_power_auto(self, gridpower):
+        if gridpower is None:
             return
         else:
-            diff = -lastPower
+            diff = -gridpower
             self._routersum = self._routersum + diff
+
+            _rsummax = self._maxdimmerpourcentage / self._integ
+            self._routersum = inbetween(-100, self._routersum, _rsummax)
+
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
-            _dimmerload = int(pDiff + iDiff)
-            _dimmerload = min(_dimmerload, 100)
-            _dimmerload = max(_dimmerload, 0)
-            _rsummax = self._maxdimmerpourcentage / self._integ
-            self._routersum = min(self._routersum, _rsummax)
-            self._routersum = max(self._routersum, -100)
+            _dimmerload = pDiff + iDiff
+            _dimmerload = inbetween(0, _dimmerload, 100)
+            _dimmerload = int(_dimmerload * 10) / 10
+
             self._setdimmer(_dimmerload)
-            self._publish_status(lastPower, _dimmerload, pDiff, iDiff)
+            self._publish_status(gridpower, _dimmerload, pDiff, iDiff)
 
 
     def _setdimmer(self, dimmerload):
+#   only publish every 10th dimmerload value, unless its value changes
+        CNT_MAX = 10
         try:
-            if self._mqttclient.connected_flag:
-                res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, str(dimmerload), 0, False)
-#                print("dimmerload: ", dimmerload)
+            if self._last_dimmerload != dimmerload:
+                self._cnt_set_dimmer = CNT_MAX
+
+            if self._cnt_set_dimmer >= CNT_MAX:
+                if self._mqttclient.connected_flag:
+                    res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, str(dimmerload), 0, False)
+#                   print("dimmerload: ", dimmerload)
+                    self._cnt_set_dimmer = 0
+                    self._last_dimmerload = dimmerload
+            else:
+                self._cnt_set_dimmer += 1
         except:
             pass
 
@@ -216,6 +251,21 @@ class GridPower:
         else:
             return self._arr_gridpower[-1]
 
+class RouterMode:
+    # supported modes: -1 (Auto), 0 (off), 1..100 (constant value)
+    def __init__(self):
+        self._current_mode = ROUTERMODE_AUTO
+
+    def set_mode(self, newvalue):
+        try:
+            self._current_mode = inbetween(-1, int(newvalue), 100)
+        except Exception as e:
+            print("[Error] [Set Routermode] " + str(e))
+
+    @property
+    def current_mode(self):
+        return self._current_mode
+
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
     print("Copyright (C) 2022 https://github.com/frtz13")
@@ -230,7 +280,6 @@ try:
 #    syslog.syslog(syslog.LOG_INFO, f"Version {SCRIPT_VERSION} running...")
 
 #   init MQTT connection
-    connect_to_MQTT = MQTT_BROKER != ""
     mqtt.Client.connected_flag = False # create flags in class
     mqtt.Client.connection_rc = -1
     MQTT_client = mqtt.Client("EnergyRouter")
@@ -238,15 +287,16 @@ try:
     lastPower = 0
     
     gridpower = GridPower()
-    router = Router(MQTT_client)
+    routermode = RouterMode()
+    router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE)
     cntupdavg = 0
 
     while True:
-        if not MQTT_connected and connect_to_MQTT:
+        if not MQTT_connected:
             MQTT_connected = MQTT_connect(MQTT_client)
         sleep(2)
 #        print(gridpower.currentvalue, gridpower.latestvalue)
-        router.set_power(gridpower.currentvalue)
+        router.set_power(routermode.current_mode, gridpower.currentvalue)
         cntupdavg += 1
         if cntupdavg % 3 == 0:
             gridpower.duplicate_latest()

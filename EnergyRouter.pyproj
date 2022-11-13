@@ -24,6 +24,7 @@
     <Compile Include="EnergyRouter.py" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="CHANGELOG" />
     <Content Include="EnergyRouterModel.ini" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />

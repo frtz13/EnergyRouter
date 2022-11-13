@@ -1,0 +1,3 @@
+version 20221113 - frtz13
+- clamp _routersum earlier in function
+- add routermode (MQTT retained message): -1: automatic, 0 for off, 1..100: constant load
