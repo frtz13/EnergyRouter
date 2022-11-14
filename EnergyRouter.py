@@ -7,7 +7,7 @@ import json
 from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221113"
+SCRIPT_VERSION = "20221114"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_MQTT = "mqtt"
