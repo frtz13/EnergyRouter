@@ -1,3 +1,11 @@
+version 20221114 - 14/11/2022
+add ESPHome source file
+new in ESPHome source: "Last Will", Watchdog
+more gain in "i" part (0.02 -> 0.04)
+loop delay set to 1s
+
 version 20221113 - frtz13
 - clamp _routersum earlier in function
-- add routermode (MQTT retained message): -1: automatic, 0 for off, 1..100: constant load
+- add routermode (MQTT retained message recommended): -1: automatic, 0 for off, 1..100: constant load
+- send dimmer command less frequently when its value does not change
+- set maximal dimmer pourcentage in configuration file

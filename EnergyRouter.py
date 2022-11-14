@@ -148,7 +148,7 @@ class Router:
     def __init__(self, mqttclient, maxdimmerpourcentage):
         self._routersum = 0
         self._prop = 0.03
-        self._integ = 0.02
+        self._integ = 0.04
         self._maxdimmerpourcentage = maxdimmerpourcentage
         self._mqttclient = mqttclient
         self._cnt_publish_status = 0
@@ -294,7 +294,7 @@ try:
     while True:
         if not MQTT_connected:
             MQTT_connected = MQTT_connect(MQTT_client)
-        sleep(2)
+        sleep(1)
 #        print(gridpower.currentvalue, gridpower.latestvalue)
         router.set_power(routermode.current_mode, gridpower.currentvalue)
         cntupdavg += 1
