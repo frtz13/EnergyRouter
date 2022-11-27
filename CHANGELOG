@@ -1,8 +1,16 @@
+version 20221125 - 
+- new mode parameter transmitted via retained MQTT topic: Mode
+- Mode = -1: automatic,
+- Mode = 0..100: set dimmer to Mode % power,
+- Mode = -2..-100: set dimmer to -Mode percentage (calibration mode)
+- open loop gain now linear in respect to power (needs calibration points, see Router._get_dimmerpercent function)
+- new format of MQTT dimmer command message, ESPHome code modified
+
 version 20221114 - 14/11/2022
-add ESPHome source file
-new in ESPHome source: "Last Will", Watchdog
-more gain in "i" part (0.02 -> 0.04)
-loop delay set to 1s
+- add ESPHome source file
+- new in ESPHome source: "Last Will", Watchdog
+- more gain in "i" part (0.02 -> 0.04)
+- loop delay set to 1s
 
 version 20221113 - frtz13
 - clamp _routersum earlier in function

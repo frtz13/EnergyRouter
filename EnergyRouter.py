@@ -7,7 +7,7 @@ import json
 from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221114"
+SCRIPT_VERSION = "20221127"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_MQTT = "mqtt"
@@ -133,12 +133,13 @@ def on_message_gridpower(client, userdata, msg):
     global gridpower
     global cntupdavg
 #    print("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
-    gridpower.addvalue(float(msg.payload))
+    gridpower.setvalue(float(msg.payload))
     cntupdavg = 0
 
 def on_message_routermode(client, userdata, msg):
     global routermode
     routermode.set_mode(msg.payload)
+
 
 def inbetween(minv, val, maxv):
     return min(maxv, max(minv, val))
@@ -147,26 +148,34 @@ def inbetween(minv, val, maxv):
 class Router:
     def __init__(self, mqttclient, maxdimmerpourcentage):
         self._routersum = 0
-        self._prop = 0.03
-        self._integ = 0.04
+        self._prop = 0.015
+        self._integ = 0.015
         self._maxdimmerpourcentage = maxdimmerpourcentage
         self._mqttclient = mqttclient
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
-        self._last_dimmerload = -1
+        self._last_dimpercent = -1
 
     def set_power(self, mode, gridpower):
         if mode == ROUTERMODE_AUTO:
             self._set_power_auto(gridpower)
         else:
-           _dimmerload = inbetween(0, mode, 100)
-           self._setdimmer(_dimmerload)
+            if mode >= 0:
+                # linearized
+                _load = inbetween(0, mode, 100)
+                _dimpercent = self._get_dimmerpercent(_load)
+                _dimpercent = int(_dimpercent * 10) / 10
+            else:
+                # calibration mode : non linearized
+                _dimpercent = inbetween(0, -mode, 100)
+                _load = _dimpercent
+            self._setdimmer(_dimpercent, _load)
 
     def _set_power_auto(self, gridpower):
         if gridpower is None:
             return
         else:
-            diff = -gridpower
+            diff = -gridpower - 5
             self._routersum = self._routersum + diff
 
             _rsummax = self._maxdimmerpourcentage / self._integ
@@ -174,26 +183,41 @@ class Router:
 
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
-            _dimmerload = pDiff + iDiff
-            _dimmerload = inbetween(0, _dimmerload, 100)
-            _dimmerload = int(_dimmerload * 10) / 10
+            _load = inbetween(0, pDiff + iDiff, 100)
+            _dimmerpercent = self._get_dimmerpercent(_load)
+            _dimmerpercent = int(_dimmerpercent * 10) / 10
+            self._setdimmer(_dimmerpercent, _load)
+            self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
-            self._setdimmer(_dimmerload)
-            self._publish_status(gridpower, _dimmerload, pDiff, iDiff)
+    def _get_dimmerpercent(self, loadpercent):
+        powerfunc = [0, 11,26,60,120,221,378,597,880,1224,1635]
+        # power values for dimmerpercent = 0,10,20...100%
+        power_lin = loadpercent * powerfunc[-1] / 100
+        for i in range(len(powerfunc)):
+            if power_lin <= powerfunc[i]:
+                dimpercent = 10 * ( i - 1 + (power_lin - powerfunc[i-1]) / (powerfunc[i] - powerfunc[i-1]))
+                return dimpercent
+        return 100
 
-    def _setdimmer(self, dimmerload):
+
+    def _setdimmer(self, dimpercent, loadpercent):
+#   dim_percent is used by the dimmer
+#   load_percent can be used to display percentage of power provided by the dimmer
 #   only publish every 10th dimmerload value, unless its value changes
         CNT_MAX = 10
         try:
-            if self._last_dimmerload != dimmerload:
+            if self._last_dimpercent != dimpercent:
                 self._cnt_set_dimmer = CNT_MAX
 
             if self._cnt_set_dimmer >= CNT_MAX:
                 if self._mqttclient.connected_flag:
-                    res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, str(dimmerload), 0, False)
-#                   print("dimmerload: ", dimmerload)
+                    dictPayload = {
+                        "dim_percent": dimpercent,
+                        "load_percent": loadpercent,
+                        }
+                    res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, json.dumps(dictPayload), 0, False)
                     self._cnt_set_dimmer = 0
-                    self._last_dimmerload = dimmerload
+                    self._last_dimpercent = dimpercent
             else:
                 self._cnt_set_dimmer += 1
         except:
@@ -220,34 +244,20 @@ class Router:
             pass
 
     def switch_off(self):
-        self._setdimmer(0)
+        self._setdimmer(0,0)
         return
 
 
 class GridPower:
     def __init__(self):
-        self._arr_gridpower = deque([], maxlen=1)
+        self._arr_gridpower = None
 
-    def addvalue(self, new):
-        self._arr_gridpower.append(new)
-
-    def duplicate_latest(self):
-        if len(self._arr_gridpower) > 0:
-            self._arr_gridpower.append(self._arr_gridpower[-1])
+    def setvalue(self, new):
+        self._arr_gridpower = new
 
     @property
     def currentvalue(self):
-        if len(self._arr_gridpower) == 0:
-            return None
-        else:
-            return sum(self._arr_gridpower) / len(self._arr_gridpower)
-
-    @property
-    def latestvalue(self):
-        if len(self._arr_gridpower) == 0:
-            return None
-        else:
-            return self._arr_gridpower[-1]
+        return self._arr_gridpower
 
 
 class RouterMode:
@@ -257,7 +267,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-1, int(newvalue), 100)
+            self._current_mode = inbetween(-100, int(newvalue), 100)
         except Exception as e:
             print("[Error] [Set Routermode] " + str(e))
 
@@ -265,6 +275,12 @@ class RouterMode:
     def current_mode(self):
         return self._current_mode
 
+
+
+
+#for i in range(10):
+#    print(_dimmerload_lin(i * 10))
+#exit()
 
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
@@ -295,11 +311,7 @@ try:
         if not MQTT_connected:
             MQTT_connected = MQTT_connect(MQTT_client)
         sleep(1)
-#        print(gridpower.currentvalue, gridpower.latestvalue)
         router.set_power(routermode.current_mode, gridpower.currentvalue)
-        cntupdavg += 1
-        if cntupdavg % 3 == 0:
-            gridpower.duplicate_latest()
 
 except KeyboardInterrupt: # trap a CTRL+C keyboard interrupt 
     router.switch_off()
