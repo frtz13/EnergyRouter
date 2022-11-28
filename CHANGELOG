@@ -1,3 +1,13 @@
+version 20221128
+- added power_estim, changed name of load_percent to power_percent
+- moved regulation parameters and PowerFunction points to ini file
+- regulation parameters from INI file are devided by the 100% value of the PowerFunction (updated during runtime every 30 s)
+- gridpower bias configured in INI file (updated during runtime every 30 s)
+- loglevel configured in ini file (updated during runtime every 30 s)
+- waits for dimmer to come online
+- alerts for unexpected MQTT disconnections
+- ESPHome dimmer code: loglevel set to info, removed reset button
+
 version 20221125 - 
 - new mode parameter transmitted via retained MQTT topic: Mode
 - Mode = -1: automatic,

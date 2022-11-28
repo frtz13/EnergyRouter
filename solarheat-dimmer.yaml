@@ -10,6 +10,7 @@ esp8266:
   board: d1_mini
 
 logger:
+  level: INFO
 
 ota:
   password: !secret ota_password
@@ -111,6 +112,3 @@ text_sensor:
     id: uptime_human
     icon: mdi:clock-start
     retain: false
-button:
-  - platform: restart
-    name: "Dimmer Restart"

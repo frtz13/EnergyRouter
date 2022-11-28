@@ -1,3 +1,4 @@
+from locale import locale_encoding_alias
 import os
 import time
 from time import sleep
@@ -10,15 +11,18 @@ import paho.mqtt.client as mqtt
 SCRIPT_VERSION = "20221127"
 
 CONFIG_FILE = "EnergyRouter.ini"
+CONFIGSECTION_ROUTER = "router"
 CONFIGSECTION_MQTT = "mqtt"
 CONFIGSECTION_GRID = "grid"
 CONFIGSECTION_DIMMER = "dimmer"
+CONFIGSECTION_REGUL = "regulation"
 
 MQTT_TOPIC_LWT = "RouterLWT"
 MQTT_PAYLOAD_ONLINE = "online"
 MQTT_PAYLOAD_OFFLINE = "offline"
 
 ROUTERMODE_AUTO = -1
+LOGLEVEL_DEBUG = "DEBUG"
 
 def read_config():
     global MQTT_BROKER
@@ -31,6 +35,9 @@ def read_config():
     global MQTT_TOPIC_DIMMER_STATUS
     global MAX_DIMMER_POURCENTAGE
     global MQTT_TOPIC_ROUTERMODE
+    global MQTT_TOPIC_DIMMER_ONLINE
+
+    global POWERFUNC
 
     try:
         confparser = configparser.RawConfigParser()
@@ -48,10 +55,62 @@ def read_config():
         MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_STATUS")
         MAX_DIMMER_POURCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_POURCENTAGE"))
         MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
+        MQTT_TOPIC_DIMMER_ONLINE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
+
+        try:
+            pf = confparser.get(CONFIGSECTION_REGUL, "power_function")
+            pflist = list(pf.split())
+            POWERFUNC = [eval(i) for i in pflist]
+            if len(POWERFUNC) != 10:
+                raise Exception("Parameter must contain 10 numbers")
+            POWERFUNC.insert(0, 0)
+        except Exception as e:
+            print(f"Error reading power function values ({e}).")
+            print("Default linear power function used. 100% value is 2000W")
+            POWERFUNC = [0,200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000]
+#        POWERFUNC = [0, 11,26,60,120,221,378,597,880,1224,1635]
 
         return True
     except Exception as e:
-        errmsg = "Error when reading configuration parameters: " + str(e)
+        errmsg = "Error when reading configuration parameters [general]: " + str(e)
+        print(errmsg)
+#        syslog.syslog(syslog.LOG_ERR, errmsg)
+        return False
+
+def read_config_regul():
+    global REGUL_PROP
+    global REGUL_INTEG
+    global GRIDPOWER_BIAS
+    global REGUL_Changed
+    global LOGLEVEL
+
+    try:
+        confparser = configparser.RawConfigParser()
+        confparser.read(os.path.join(sys.path[0], CONFIG_FILE))
+        old_prop = REGUL_PROP
+        old_integ = REGUL_INTEG
+        old_gridpower_bias = GRIDPOWER_BIAS
+        REGUL_PROP = float(confparser.get(CONFIGSECTION_REGUL, "prop"))
+        REGUL_INTEG = float(confparser.get(CONFIGSECTION_REGUL, "integ"))
+        try:
+            GRIDPOWER_BIAS = float(confparser.get(CONFIGSECTION_REGUL, "gridpower_bias"))
+        except Exception:
+            GRIDPOWER_BIAS = 0
+
+        REGUL_Changed = (old_prop != REGUL_PROP) and (old_prop is not None)
+        REGUL_Changed = REGUL_Changed or ((old_integ != REGUL_INTEG) and (old_integ is not None))
+        REGUL_Changed = REGUL_Changed or ((old_gridpower_bias != GRIDPOWER_BIAS) and (old_gridpower_bias is not None))
+        if REGUL_Changed:
+            print("Got new regulation parameters from INI file")
+        
+        try:
+            LOGLEVEL = confparser.get(CONFIGSECTION_ROUTER, "loglevel")
+        except Exception:
+            LOGLEVEL = LOGLEVEL_DEBUG
+
+        return True
+    except Exception as e:
+        errmsg = "Error when reading configuration parameters [regulation]: " + str(e)
         print(errmsg)
 #        syslog.syslog(syslog.LOG_ERR, errmsg)
         return False
@@ -78,7 +137,12 @@ def on_MQTTconnect(client, userdata, flags, rc):
 #        syslog.syslog(syslog.LOG_ERR, errMsgFull)
 
 def on_MQTTdisconnect(client, userdata, rc):
-#    print("disconnecting reason  "  + str(rc))
+    if rc != 0:
+        if rc == 7:
+            expl = ". Another router running?"
+        else:
+            expl = ""
+        print(f"Unexpected MQTT disconnection. Reason: {rc}{expl}")
     client.connected_flag = False
 
 def MQTT_connect(client):
@@ -87,6 +151,7 @@ def MQTT_connect(client):
     client.on_message = on_message
     client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
     client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, on_message_routermode)
+    client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, on_message_dimmeronline)
     client.will_set(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
     if len(MQTT_USERNAME) > 0:
         client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
@@ -95,7 +160,7 @@ def MQTT_connect(client):
         client.connect(MQTT_BROKER, MQTT_PORT) #connect to broker
         client.loop_start()
     except Exception as e:
-#        print("connection failed: " + str(e))
+        print(f"MQTT connection failed: {e}")
         return False
     timeout = time.time() + 5
     while client.connection_rc == -1: #wait in loop
@@ -105,7 +170,8 @@ def MQTT_connect(client):
     if client.connected_flag:
         subscr_result = client.subscribe([
             (MQTT_TOPIC_GRIDPOWER,0),
-            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0)
+            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0),
+            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, 0)
         ])
         if subscr_result[0] != 0:
             print("[error] mqtt subscription failed: " + subscr_result[0])
@@ -127,18 +193,23 @@ def MQTT_terminate(client):
         pass
 
 def on_message(client, userdata, msg):
-    print("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
+    print(f"MQTT Message received: {msg.topic} / {msg.payload}")
 
 def on_message_gridpower(client, userdata, msg):
     global gridpower
-    global cntupdavg
-#    print("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
     gridpower.setvalue(float(msg.payload))
-    cntupdavg = 0
 
 def on_message_routermode(client, userdata, msg):
     global routermode
     routermode.set_mode(msg.payload)
+
+def on_message_dimmeronline(client, userdata, msg):
+    global DIMMER_IS_ONLINE
+    DIMMER_IS_ONLINE = (msg.payload.decode("ascii") == "online")
+    if DIMMER_IS_ONLINE:
+        print("Dimmer is online")
+    else:
+        print("Dimmer is offline")
 
 
 def inbetween(minv, val, maxv):
@@ -146,17 +217,29 @@ def inbetween(minv, val, maxv):
 
 
 class Router:
-    def __init__(self, mqttclient, maxdimmerpourcentage):
+    def __init__(self, mqttclient, maxdimmerpourcentage, prop, integ, gridpower_bias):
         self._routersum = 0
-        self._prop = 0.015
-        self._integ = 0.015
+        self.set_prop(prop)
+        self.set_integ(integ)
+        self.set_gridpower_bias(gridpower_bias)
         self._maxdimmerpourcentage = maxdimmerpourcentage
         self._mqttclient = mqttclient
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
         self._last_dimpercent = -1
 
+    def set_prop(self, value):
+        self._prop = value / POWERFUNC[-1]
+
+    def set_integ(self, value):
+        self._integ = value / POWERFUNC[-1]
+
+    def set_gridpower_bias(self, value):
+        self._gridpower_bias = value
+
     def set_power(self, mode, gridpower):
+        if not DIMMER_IS_ONLINE:
+            return
         if mode == ROUTERMODE_AUTO:
             self._set_power_auto(gridpower)
         else:
@@ -175,7 +258,7 @@ class Router:
         if gridpower is None:
             return
         else:
-            diff = -gridpower - 5
+            diff = -gridpower + self._gridpower_bias
             self._routersum = self._routersum + diff
 
             _rsummax = self._maxdimmerpourcentage / self._integ
@@ -187,15 +270,15 @@ class Router:
             _dimmerpercent = self._get_dimmerpercent(_load)
             _dimmerpercent = int(_dimmerpercent * 10) / 10
             self._setdimmer(_dimmerpercent, _load)
-            self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
+            if LOGLEVEL == LOGLEVEL_DEBUG:
+                self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
     def _get_dimmerpercent(self, loadpercent):
-        powerfunc = [0, 11,26,60,120,221,378,597,880,1224,1635]
         # power values for dimmerpercent = 0,10,20...100%
-        power_lin = loadpercent * powerfunc[-1] / 100
-        for i in range(len(powerfunc)):
-            if power_lin <= powerfunc[i]:
-                dimpercent = 10 * ( i - 1 + (power_lin - powerfunc[i-1]) / (powerfunc[i] - powerfunc[i-1]))
+        power_lin = loadpercent * POWERFUNC[-1] / 100
+        for i in range(len(POWERFUNC)):
+            if power_lin <= POWERFUNC[i]:
+                dimpercent = 10 * ( i - 1 + (power_lin - POWERFUNC[i-1]) / (POWERFUNC[i] - POWERFUNC[i-1]))
                 return dimpercent
         return 100
 
@@ -213,7 +296,8 @@ class Router:
                 if self._mqttclient.connected_flag:
                     dictPayload = {
                         "dim_percent": dimpercent,
-                        "load_percent": loadpercent,
+                        "power_percent": loadpercent,
+                        "power_estim": int(loadpercent * POWERFUNC[-1] / 100),
                         }
                     res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, json.dumps(dictPayload), 0, False)
                     self._cnt_set_dimmer = 0
@@ -269,18 +353,17 @@ class RouterMode:
         try:
             self._current_mode = inbetween(-100, int(newvalue), 100)
         except Exception as e:
-            print("[Error] [Set Routermode] " + str(e))
+            print(f"[Error] [Set Routermode] {e}")
 
     @property
     def current_mode(self):
         return self._current_mode
 
 
-
-
-#for i in range(10):
-#    print(_dimmerload_lin(i * 10))
-#exit()
+REGUL_PROP = None
+REGUL_INTEG = None
+GRIDPOWER_BIAS = None
+DIMMER_IS_ONLINE = False
 
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
@@ -288,6 +371,10 @@ try:
     print()
 
     if not read_config():
+        print("Please check configuration file and parameters")
+#        syslog.syslog(syslog.LOG_WARNING, "Program stopped. Please check configuration file and parameters.")
+        exit()
+    if not read_config_regul():
         print("Please check configuration file and parameters")
 #        syslog.syslog(syslog.LOG_WARNING, "Program stopped. Please check configuration file and parameters.")
         exit()
@@ -304,13 +391,23 @@ try:
     
     gridpower = GridPower()
     routermode = RouterMode()
-    router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE)
-    cntupdavg = 0
+    router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
+    cnt_readregul = 0
 
     while True:
         if not MQTT_connected:
             MQTT_connected = MQTT_connect(MQTT_client)
         sleep(1)
+        if cnt_readregul >= 30:
+            cnt_readregul = 0
+            if read_config_regul():
+                if REGUL_Changed:
+                    router.set_prop(REGUL_PROP)
+                    router.set_integ(REGUL_INTEG)
+                    router.set_gridpower_bias(GRIDPOWER_BIAS)
+        else:
+            cnt_readregul += 1
+
         router.set_power(routermode.current_mode, gridpower.currentvalue)
 
 except KeyboardInterrupt: # trap a CTRL+C keyboard interrupt 
