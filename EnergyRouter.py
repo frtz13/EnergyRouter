@@ -3,12 +3,13 @@ import os
 import time
 from time import sleep
 import sys
+import syslog
 import configparser
 import json
 from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221127"
+SCRIPT_VERSION = "20221203"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -68,13 +69,12 @@ def read_config():
             print(f"Error reading power function values ({e}).")
             print("Default linear power function used. 100% value is 2000W")
             POWERFUNC = [0,200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000]
-#        POWERFUNC = [0, 11,26,60,120,221,378,597,880,1224,1635]
 
         return True
     except Exception as e:
-        errmsg = "Error when reading configuration parameters [general]: " + str(e)
+        errmsg = f"Error when reading configuration parameters [general]: {e}"
         print(errmsg)
-#        syslog.syslog(syslog.LOG_ERR, errmsg)
+        syslog.syslog(syslog.LOG_ERR, errmsg)
         return False
 
 def read_config_regul():
@@ -101,7 +101,9 @@ def read_config_regul():
         REGUL_Changed = REGUL_Changed or ((old_integ != REGUL_INTEG) and (old_integ is not None))
         REGUL_Changed = REGUL_Changed or ((old_gridpower_bias != GRIDPOWER_BIAS) and (old_gridpower_bias is not None))
         if REGUL_Changed:
-            print("Got new regulation parameters from INI file")
+            msg = "Got new regulation parameters from INI file"
+            print(msg)
+            syslog.syslog(syslog.LOG_INFO, msg)
         
         try:
             LOGLEVEL = confparser.get(CONFIGSECTION_ROUTER, "loglevel")
@@ -110,18 +112,26 @@ def read_config_regul():
 
         return True
     except Exception as e:
-        errmsg = "Error when reading configuration parameters [regulation]: " + str(e)
+        errmsg = f"Error when reading configuration parameters [regulation]: {e}"
         print(errmsg)
-#        syslog.syslog(syslog.LOG_ERR, errmsg)
+        syslog.syslog(syslog.LOG_ERR, errmsg)
         return False
 
 def on_MQTTconnect(client, userdata, flags, rc):
     client.connection_rc = rc
     if rc == 0:
         client.connected_flag = True
-#       print("connected OK")
+#        print("connected OK")
         try:
             client.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_ONLINE, 0, retain=True)
+#            print("mqtt subscription")
+            subscr_result = client.subscribe([
+                (MQTT_TOPIC_GRIDPOWER,0),
+                (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0),
+                (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, 0)
+            ])
+            if subscr_result[0] != 0:
+                print("[error] mqtt subscription failed: " + subscr_result[0])
         except:
             pass
     else:
@@ -134,7 +144,7 @@ def on_MQTTconnect(client, userdata, flags, rc):
             }
         errMsgFull = "Connection to MQTT broker failed. " + errMsg.get(rc, f"Unknown error: {str(rc)}.")
         print(errMsgFull)
-#        syslog.syslog(syslog.LOG_ERR, errMsgFull)
+        syslog.syslog(syslog.LOG_ERR, errMsgFull)
 
 def on_MQTTdisconnect(client, userdata, rc):
     if rc != 0:
@@ -143,6 +153,7 @@ def on_MQTTdisconnect(client, userdata, rc):
         else:
             expl = ""
         print(f"Unexpected MQTT disconnection. Reason: {rc}{expl}")
+        syslog.syslog(syslog.LOG_WARNING, f"Unexpected MQTT disconnection. Reason: {rc}{expl}")
     client.connected_flag = False
 
 def MQTT_connect(client):
@@ -155,7 +166,7 @@ def MQTT_connect(client):
     client.will_set(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
     if len(MQTT_USERNAME) > 0:
         client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
-#    print("Connecting to broker ",MQTT_BROKER)
+    #    print("Connecting to broker ",MQTT_BROKER)
     try:
         client.connect(MQTT_BROKER, MQTT_PORT) #connect to broker
         client.loop_start()
@@ -167,17 +178,7 @@ def MQTT_connect(client):
         if time.time() > timeout:
             break
         time.sleep(1)
-    if client.connected_flag:
-        subscr_result = client.subscribe([
-            (MQTT_TOPIC_GRIDPOWER,0),
-            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0),
-            (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, 0)
-        ])
-        if subscr_result[0] != 0:
-            print("[error] mqtt subscription failed: " + subscr_result[0])
-        return True
-    else:
-        return False
+    return client.connected_flag
 
 def MQTT_terminate(client):
     try:
@@ -208,8 +209,10 @@ def on_message_dimmeronline(client, userdata, msg):
     DIMMER_IS_ONLINE = (msg.payload.decode("ascii") == "online")
     if DIMMER_IS_ONLINE:
         print("Dimmer is online")
+        syslog.syslog(syslog.LOG_INFO, "Dimmer is online")
     else:
         print("Dimmer is offline")
+        syslog.syslog(syslog.LOG_INFO, "Dimmer is offline")
 
 
 def inbetween(minv, val, maxv):
@@ -337,7 +340,10 @@ class GridPower:
         self._arr_gridpower = None
 
     def setvalue(self, new):
+        global tick_gridpower
+
         self._arr_gridpower = new
+        tick_gridpower = 0
 
     @property
     def currentvalue(self):
@@ -351,7 +357,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-100, int(newvalue), 100)
+            self._current_mode = inbetween(-100, int(float(newvalue.decode("ascii"))), 100)
         except Exception as e:
             print(f"[Error] [Set Routermode] {e}")
 
@@ -360,10 +366,30 @@ class RouterMode:
         return self._current_mode
 
 
+def read_regul():
+    '''
+    Re regulation parameters once every 30s
+    to avoid restart when experimenting
+    '''
+    global cnt_readregul
+
+    if cnt_readregul >= 30:
+        cnt_readregul = 0
+        if read_config_regul():
+            if REGUL_Changed:
+                router.set_prop(REGUL_PROP)
+                router.set_integ(REGUL_INTEG)
+                router.set_gridpower_bias(GRIDPOWER_BIAS)
+    else:
+        cnt_readregul += 1
+
+
 REGUL_PROP = None
 REGUL_INTEG = None
 GRIDPOWER_BIAS = None
 DIMMER_IS_ONLINE = False
+# accepted maximum interval between gridpower MQTT messages
+TICK_GRIDPOWER_MAX = 30 #seconds
 
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
@@ -372,46 +398,53 @@ try:
 
     if not read_config():
         print("Please check configuration file and parameters")
-#        syslog.syslog(syslog.LOG_WARNING, "Program stopped. Please check configuration file and parameters.")
+        syslog.syslog(syslog.LOG_WARNING, "Program stopped. Please check configuration file and parameters.")
         exit()
     if not read_config_regul():
-        print("Please check configuration file and parameters")
-#        syslog.syslog(syslog.LOG_WARNING, "Program stopped. Please check configuration file and parameters.")
+        print("[regul] Please check configuration file and parameters.")
+        syslog.syslog(syslog.LOG_WARNING, "Program stopped. [regul] Please check configuration file and parameters.")
         exit()
 
     print("Type ctrl-C to exit")
-#    syslog.syslog(syslog.LOG_INFO, f"Version {SCRIPT_VERSION} running...")
+    syslog.syslog(syslog.LOG_INFO, f"Version {SCRIPT_VERSION} running...")
 
 #   init MQTT connection
     mqtt.Client.connected_flag = False # create flags in class
     mqtt.Client.connection_rc = -1
     MQTT_client = mqtt.Client("EnergyRouter")
-    MQTT_connected = False
-    lastPower = 0
     
     gridpower = GridPower()
     routermode = RouterMode()
     router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
     cnt_readregul = 0
+    tick_gridpower = 0
+    router_off_no_gridpower_info = False
+    MQTT_connect(MQTT_client)
 
     while True:
-        if not MQTT_connected:
-            MQTT_connected = MQTT_connect(MQTT_client)
         sleep(1)
-        if cnt_readregul >= 30:
-            cnt_readregul = 0
-            if read_config_regul():
-                if REGUL_Changed:
-                    router.set_prop(REGUL_PROP)
-                    router.set_integ(REGUL_INTEG)
-                    router.set_gridpower_bias(GRIDPOWER_BIAS)
-        else:
-            cnt_readregul += 1
+        read_regul()
 
-        router.set_power(routermode.current_mode, gridpower.currentvalue)
+        if (tick_gridpower >= TICK_GRIDPOWER_MAX) and (routermode.current_mode == ROUTERMODE_AUTO):
+            # we switch off router in auto mode without news from grid power
+            if not router_off_no_gridpower_info:
+                router_off_no_gridpower_info = True
+                router.switch_off()
+                msg = "[Error] [Timeout] No gridpower info. Router switched off."
+                print(msg)
+                syslog.syslog(syslog.LOG_WARNING, msg)
+        else:
+            if router_off_no_gridpower_info:
+                router_off_no_gridpower_info = False
+                msg = "Gridpower info is back. Router switched back on."
+                print(msg)
+                syslog.syslog(syslog.LOG_WARNING, msg)
+            router.set_power(routermode.current_mode, gridpower.currentvalue)
+            if tick_gridpower < TICK_GRIDPOWER_MAX:
+                tick_gridpower += 1
 
 except KeyboardInterrupt: # trap a CTRL+C keyboard interrupt 
     router.switch_off()
     MQTT_terminate(MQTT_client)
     print()
-#    syslog.syslog(syslog.LOG_INFO, "Stopped")
+    syslog.syslog(syslog.LOG_INFO, "Stopped")

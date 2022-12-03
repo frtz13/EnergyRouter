@@ -1,3 +1,10 @@
+version 20221203
+- accept decimal values for MQTT mode parameter
+- some code clean-up
+- better MQTT connection/disconnection handling
+- stop regulation in auto mode when gridpower info missing
+- write messages to syslog
+
 version 20221128
 - added power_estim, changed name of load_percent to power_percent
 - moved regulation parameters and PowerFunction points to ini file
