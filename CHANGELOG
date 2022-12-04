@@ -1,3 +1,11 @@
+version 20221204
+- react to termination requests
+- code cleanup
+- explanations in INI file for the power function
+- new calculation in router._get_dimmerpercent (experimental)
+- Breaking change: INI file parameter MAX_POURCENTAGE renamed to MAX_PERCENTAGE
+- README.md
+
 version 20221203
 - accept decimal values for MQTT mode parameter
 - some code clean-up

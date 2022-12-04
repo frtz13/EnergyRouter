@@ -1,15 +1,17 @@
 from locale import locale_encoding_alias
 import os
+import signal
 import time
 from time import sleep
 import sys
 import syslog
 import configparser
 import json
-from collections import deque
+import math
+# from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221203"
+SCRIPT_VERSION = "20221204"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -54,7 +56,7 @@ def read_config():
         MQTT_TOPIC_DIMMER_ROOT = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ROOT")
         MQTT_TOPIC_DIMMER_POWER = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_POWER")
         MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_STATUS")
-        MAX_DIMMER_POURCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_POURCENTAGE"))
+        MAX_DIMMER_POURCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_PERCENTAGE"))
         MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
         MQTT_TOPIC_DIMMER_ONLINE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
 
@@ -230,6 +232,7 @@ class Router:
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
         self._last_dimpercent = -1
+        self._cuberoot100 = 100 / (100 ** (1./3))
 
     def set_prop(self, value):
         self._prop = value / POWERFUNC[-1]
@@ -277,7 +280,10 @@ class Router:
                 self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
     def _get_dimmerpercent(self, loadpercent):
-        # power values for dimmerpercent = 0,10,20...100%
+        # calculate the dimmer% we need to get loadpercent * POWERFUNC[1] output power
+        # we look for the corresponding interval in the POWERFUNC
+        # then we make a linear interpolation
+        return  self._cuberoot100 * loadpercent ** (1./3)
         power_lin = loadpercent * POWERFUNC[-1] / 100
         for i in range(len(POWERFUNC)):
             if power_lin <= POWERFUNC[i]:
@@ -365,6 +371,8 @@ class RouterMode:
     def current_mode(self):
         return self._current_mode
 
+    def in_auto_mode(self):
+        return self._current_mode == ROUTERMODE_AUTO
 
 def read_regul():
     '''
@@ -384,17 +392,48 @@ def read_regul():
         cnt_readregul += 1
 
 
+def check_gridpower_info():
+    TICK_GRIDPOWER_MAX = 60 #seconds
+
+    global router_off_no_gridpower_info
+    global tick_gridpower
+
+    if (tick_gridpower >= TICK_GRIDPOWER_MAX):
+        # we switch off router in auto mode without news from grid power
+        if not router_off_no_gridpower_info:
+            router_off_no_gridpower_info = True
+            msg = "[Timeout] No gridpower info. Router switched off."
+            print(msg)
+            syslog.syslog(syslog.LOG_WARNING, msg)
+    else:
+        if router_off_no_gridpower_info:
+            router_off_no_gridpower_info = False
+            msg = "Gridpower info is back. Router switched back on."
+            print(msg)
+            syslog.syslog(syslog.LOG_INFO, msg)
+        if tick_gridpower < TICK_GRIDPOWER_MAX:
+            tick_gridpower += 1
+
+
+def handler_stop_signals(sig, frame):
+    global termination_request
+    termination_request = True
+
+
 REGUL_PROP = None
 REGUL_INTEG = None
 GRIDPOWER_BIAS = None
 DIMMER_IS_ONLINE = False
 # accepted maximum interval between gridpower MQTT messages
-TICK_GRIDPOWER_MAX = 30 #seconds
+termination_request = False
 
 try:
     print(f"Energy Router {SCRIPT_VERSION}")
     print("Copyright (C) 2022 https://github.com/frtz13")
     print()
+
+    signal.signal(signal.SIGINT, handler_stop_signals)
+    signal.signal(signal.SIGTERM, handler_stop_signals)
 
     if not read_config():
         print("Please check configuration file and parameters")
@@ -418,30 +457,21 @@ try:
     router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
     cnt_readregul = 0
     tick_gridpower = 0
-    router_off_no_gridpower_info = False
+    router_off_no_gridpower_info = None
     MQTT_connect(MQTT_client)
 
     while True:
+        if termination_request:
+            raise KeyboardInterrupt()
+
         sleep(1)
         read_regul()
 
-        if (tick_gridpower >= TICK_GRIDPOWER_MAX) and (routermode.current_mode == ROUTERMODE_AUTO):
-            # we switch off router in auto mode without news from grid power
-            if not router_off_no_gridpower_info:
-                router_off_no_gridpower_info = True
-                router.switch_off()
-                msg = "[Error] [Timeout] No gridpower info. Router switched off."
-                print(msg)
-                syslog.syslog(syslog.LOG_WARNING, msg)
+        check_gridpower_info()
+        if router_off_no_gridpower_info and routermode.in_auto_mode:
+            router.switch_off()
         else:
-            if router_off_no_gridpower_info:
-                router_off_no_gridpower_info = False
-                msg = "Gridpower info is back. Router switched back on."
-                print(msg)
-                syslog.syslog(syslog.LOG_WARNING, msg)
             router.set_power(routermode.current_mode, gridpower.currentvalue)
-            if tick_gridpower < TICK_GRIDPOWER_MAX:
-                tick_gridpower += 1
 
 except KeyboardInterrupt: # trap a CTRL+C keyboard interrupt 
     router.switch_off()

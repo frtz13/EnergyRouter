@@ -5,6 +5,10 @@ substitutions:
 esphome:
   name: ${node_name}
   build_path: ${node_name}/
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_off: solarheat_dimmer
 
 esp8266:
   board: d1_mini
@@ -44,19 +48,56 @@ mqtt:
           id: solarheat_dimmer
           brightness: !lambda |-
             float dim = 0;
-            if (x.containsKey("dim_percent"))
-              dim = x["dim_percent"];
-            return dim / 100;
+            if (id(enable_light))
+              {
+              if (x.containsKey("dim_percent"))
+                dim = x["dim_percent"];
+              return dim / 100;
+              }
+            else
+            {
+              ESP_LOGW("Dimmer", "Dimmer disabled");
+              return 0;
+            }
       - script.execute: dimmer_watchdog
+
+globals:
+   - id: enable_light
+     type: bool
+     restore_value: no
+     initial_value: 'true'
+     # we should set this to 'false' so dimmer won't start without ZC
+     # in fact, we need to check if it actually does
+     # but this does not seem to work
 
 script:
   - id: dimmer_watchdog
     mode: restart
-      # dimmer will continue working x minutes since
-      # the latest time the script is executed
     then:
       - delay: 1 min
       - light.turn_off: solarheat_dimmer
+      - logger.log: "dimmer reset to 0 by watchdog"
+
+  - id: zc_watchdog
+    mode: restart
+    then:
+      - globals.set:
+          id: enable_light
+          value: 'true'
+      - delay: 200 ms
+      - globals.set:
+          id: enable_light
+          value: 'false'
+      - light.turn_off: solarheat_dimmer
+      - logger.log: "dimmer reset to 0 by zc watchdog"
+
+binary_sensor:
+    platform: gpio
+    pin: GPIO14
+    name: zc
+    on_press:
+      then:
+        - script.execute: zc_watchdog
 
 output:
   - platform: ac_dimmer
@@ -78,7 +119,6 @@ light:
     default_transition_length: 0s
 
 sensor:
-
   - platform: wifi_signal
     name: "rssi"
     update_interval: 60s
