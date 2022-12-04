@@ -11,7 +11,7 @@ import math
 # from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221204"
+SCRIPT_VERSION = "20221204a"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -39,8 +39,7 @@ def read_config():
     global MAX_DIMMER_POURCENTAGE
     global MQTT_TOPIC_ROUTERMODE
     global MQTT_TOPIC_DIMMER_ONLINE
-
-    global POWERFUNC
+    global LOAD_MAX_POWER
 
     try:
         confparser = configparser.RawConfigParser()
@@ -60,17 +59,9 @@ def read_config():
         MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
         MQTT_TOPIC_DIMMER_ONLINE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
 
-        try:
-            pf = confparser.get(CONFIGSECTION_REGUL, "power_function")
-            pflist = list(pf.split())
-            POWERFUNC = [eval(i) for i in pflist]
-            if len(POWERFUNC) != 10:
-                raise Exception("Parameter must contain 10 numbers")
-            POWERFUNC.insert(0, 0)
-        except Exception as e:
-            print(f"Error reading power function values ({e}).")
-            print("Default linear power function used. 100% value is 2000W")
-            POWERFUNC = [0,200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000]
+        LOAD_MAX_POWER =  int(confparser.get(CONFIGSECTION_REGUL, "LOAD_MAX_POWER_W"))
+        if LOAD_MAX_POWER < 10:
+            raise Exception("Need reasonable value for LOAD_MAX_POWER_W (> 10).")
 
         return True
     except Exception as e:
@@ -232,13 +223,12 @@ class Router:
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
         self._last_dimpercent = -1
-        self._cuberoot100 = 100 / (100 ** (1./3))
 
     def set_prop(self, value):
-        self._prop = value / POWERFUNC[-1]
+        self._prop = value / LOAD_MAX_POWER
 
     def set_integ(self, value):
-        self._integ = value / POWERFUNC[-1]
+        self._integ = value / LOAD_MAX_POWER
 
     def set_gridpower_bias(self, value):
         self._gridpower_bias = value
@@ -249,16 +239,9 @@ class Router:
         if mode == ROUTERMODE_AUTO:
             self._set_power_auto(gridpower)
         else:
-            if mode >= 0:
-                # linearized
-                _load = inbetween(0, mode, 100)
-                _dimpercent = self._get_dimmerpercent(_load)
-                _dimpercent = int(_dimpercent * 10) / 10
-            else:
-                # calibration mode : non linearized
-                _dimpercent = inbetween(0, -mode, 100)
-                _load = _dimpercent
-            self._setdimmer(_dimpercent, _load)
+            _dimpercent = inbetween(0, mode, 100)
+            _dimpercent = int(_dimpercent * 10) / 10
+            self._setdimmer(_dimpercent)
 
     def _set_power_auto(self, gridpower):
         if gridpower is None:
@@ -272,45 +255,42 @@ class Router:
 
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
-            _load = inbetween(0, pDiff + iDiff, 100)
-            _dimmerpercent = self._get_dimmerpercent(_load)
+            _dimmerpercent = inbetween(0, pDiff + iDiff, 100)
             _dimmerpercent = int(_dimmerpercent * 10) / 10
-            self._setdimmer(_dimmerpercent, _load)
+            self._setdimmer(_dimmerpercent)
             if LOGLEVEL == LOGLEVEL_DEBUG:
                 self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
-    def _get_dimmerpercent(self, loadpercent):
+#    def _get_dimmerpercent(self, loadpercent):
         # calculate the dimmer% we need to get loadpercent * POWERFUNC[1] output power
         # we look for the corresponding interval in the POWERFUNC
         # then we make a linear interpolation
-        return  self._cuberoot100 * loadpercent ** (1./3)
-        power_lin = loadpercent * POWERFUNC[-1] / 100
-        for i in range(len(POWERFUNC)):
-            if power_lin <= POWERFUNC[i]:
-                dimpercent = 10 * ( i - 1 + (power_lin - POWERFUNC[i-1]) / (POWERFUNC[i] - POWERFUNC[i-1]))
-                return dimpercent
-        return 100
+        #power_lin = loadpercent * POWERFUNC[-1] / 100
+        #for i in range(len(POWERFUNC)):
+        #    if power_lin <= POWERFUNC[i]:
+        #        dimpercent = 10 * ( i - 1 + (power_lin - POWERFUNC[i-1]) / (POWERFUNC[i] - POWERFUNC[i-1]))
+        #        return dimpercent
+        #return 100
 
 
-    def _setdimmer(self, dimpercent, loadpercent):
+    def _setdimmer(self, percent):
 #   dim_percent is used by the dimmer
 #   load_percent can be used to display percentage of power provided by the dimmer
 #   only publish every 10th dimmerload value, unless its value changes
         CNT_MAX = 10
         try:
-            if self._last_dimpercent != dimpercent:
+            if self._last_dimpercent != percent:
                 self._cnt_set_dimmer = CNT_MAX
 
             if self._cnt_set_dimmer >= CNT_MAX:
                 if self._mqttclient.connected_flag:
                     dictPayload = {
-                        "dim_percent": dimpercent,
-                        "power_percent": loadpercent,
-                        "power_estim": int(loadpercent * POWERFUNC[-1] / 100),
+                        "dim_percent": percent,
+                        "power_estim": int(percent * LOAD_MAX_POWER / 100),
                         }
                     res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, json.dumps(dictPayload), 0, False)
                     self._cnt_set_dimmer = 0
-                    self._last_dimpercent = dimpercent
+                    self._last_dimpercent = percent
             else:
                 self._cnt_set_dimmer += 1
         except:
@@ -337,7 +317,7 @@ class Router:
             pass
 
     def switch_off(self):
-        self._setdimmer(0,0)
+        self._setdimmer(0)
         return
 
 
@@ -363,7 +343,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-100, int(float(newvalue.decode("ascii"))), 100)
+            self._current_mode = inbetween(0, int(float(newvalue.decode("ascii"))), 100)
         except Exception as e:
             print(f"[Error] [Set Routermode] {e}")
 

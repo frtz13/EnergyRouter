@@ -91,13 +91,13 @@ script:
       - light.turn_off: solarheat_dimmer
       - logger.log: "dimmer reset to 0 by zc watchdog"
 
-binary_sensor:
-    platform: gpio
-    pin: GPIO14
-    name: zc
-    on_press:
-      then:
-        - script.execute: zc_watchdog
+#binary_sensor:
+#    platform: gpio
+#    pin: GPIO14
+#    name: zc
+#    on_press:
+#      then:
+#        - script.execute: zc_watchdog
 
 output:
   - platform: ac_dimmer
@@ -117,6 +117,7 @@ light:
     name: "Solarheat Dimmer"
     id: solarheat_dimmer
     default_transition_length: 0s
+    gamma_correct: 1.0
 
 sensor:
   - platform: wifi_signal
