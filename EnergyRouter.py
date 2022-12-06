@@ -363,7 +363,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-100, int(float(newvalue.decode("ascii"))), 100)
+            self._current_mode = inbetween(-1, int(float(newvalue.decode("ascii"))), 100)
         except Exception as e:
             print(f"[Error] [Set Routermode] {e}")
 
