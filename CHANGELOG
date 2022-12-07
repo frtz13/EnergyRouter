@@ -1,3 +1,8 @@
+version 20221205
+- bug fix: RouterMode.set_mode
+- code cleanup
+- README: apex-chart
+
 version 20221204a
 - code cleanup
 - power function replaced by LOAD_MAX_POWER parameter

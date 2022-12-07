@@ -48,13 +48,7 @@ MQTT_TOPIC_DIMMER_STATUS: in DEBUG mode, the Energy Router sends internal values
 
 #### [regulation] section
 
-
-
 ### Energy Router operation
-
-
-
-
 
 ## Home Assistant integration
 
@@ -104,7 +98,6 @@ mqtt:
         qos: 0
         retain: true
         icon: mdi:routes
-
 ```
 
 In case we switch the Energy Router to manual mode, we configure an Automation to send the corresponding value to its "mode" topic.
@@ -182,3 +175,30 @@ To put these controls on our dashboard, you can use the following code:
 ```
 
 This code will hide the energy_router_power numeric input, when the Energy Router is in automatic mode.
+
+A chart to track grid power and the power sent to the water heater (in negative direction):
+
+```
+type: custom:apexcharts-card
+graph_span: 1h
+header:
+  show: true
+  title: ApexCharts-Card
+  show_states: true
+  colorize_states: true
+series:
+  - entity: sensor.house_real_power
+    stroke_width: 2
+    curve: stepline
+    yaxis_id: power
+  - entity: sensor.energy_router_dimmer
+    stroke_width: 1
+    curve: stepline
+    yaxis_id: power
+    transform: return -x
+yaxis:
+  - id: power
+    opposite: false
+    apex_config:
+      forceNiceScale: true
+```

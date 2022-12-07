@@ -11,7 +11,7 @@ import math
 # from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221204a"
+SCRIPT_VERSION = "20221205"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -24,7 +24,6 @@ MQTT_TOPIC_LWT = "RouterLWT"
 MQTT_PAYLOAD_ONLINE = "online"
 MQTT_PAYLOAD_OFFLINE = "offline"
 
-ROUTERMODE_AUTO = -1
 LOGLEVEL_DEBUG = "DEBUG"
 
 def read_config():
@@ -201,11 +200,13 @@ def on_message_dimmeronline(client, userdata, msg):
     global DIMMER_IS_ONLINE
     DIMMER_IS_ONLINE = (msg.payload.decode("ascii") == "online")
     if DIMMER_IS_ONLINE:
-        print("Dimmer is online")
-        syslog.syslog(syslog.LOG_INFO, "Dimmer is online")
+        mess = "Dimmer is online"
+        print(mess)
+        syslog.syslog(syslog.LOG_INFO, mess)
     else:
-        print("Dimmer is offline")
-        syslog.syslog(syslog.LOG_INFO, "Dimmer is offline")
+        mess = "Dimmer is offline"
+        print(mess)
+        syslog.syslog(syslog.LOG_INFO, mess)
 
 
 def inbetween(minv, val, maxv):
@@ -233,13 +234,13 @@ class Router:
     def set_gridpower_bias(self, value):
         self._gridpower_bias = value
 
-    def set_power(self, mode, gridpower):
+    def set_power(self, routermode, gridpower):
         if not DIMMER_IS_ONLINE:
             return
-        if mode == ROUTERMODE_AUTO:
+        if routermode.in_auto_mode:
             self._set_power_auto(gridpower)
         else:
-            _dimpercent = inbetween(0, mode, 100)
+            _dimpercent = inbetween(0, routermode.current_mode, 100)
             _dimpercent = int(_dimpercent * 10) / 10
             self._setdimmer(_dimpercent)
 
@@ -338,21 +339,26 @@ class GridPower:
 
 class RouterMode:
     # supported modes: -1 (Auto), 0 (off), 1..100 (constant value)
+ 
     def __init__(self):
-        self._current_mode = ROUTERMODE_AUTO
+        self._ROUTERMODE_AUTO = -1
+        self._current_mode = self._ROUTERMODE_AUTO
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(0, int(float(newvalue.decode("ascii"))), 100)
+            self._current_mode = inbetween(-1, int(float(newvalue.decode("ascii"))), 100)
         except Exception as e:
-            print(f"[Error] [Set Routermode] {e}")
+            msg = (f"[Error] [Set Routermode] {e}")
+            print(msg)
+            syslog.syslog(syslog.LOG_WARNING, msg)
 
     @property
     def current_mode(self):
         return self._current_mode
 
+    @property
     def in_auto_mode(self):
-        return self._current_mode == ROUTERMODE_AUTO
+        return self._current_mode == self._ROUTERMODE_AUTO
 
 def read_regul():
     '''
@@ -387,10 +393,10 @@ def check_gridpower_info():
             syslog.syslog(syslog.LOG_WARNING, msg)
     else:
         if router_off_no_gridpower_info:
-            router_off_no_gridpower_info = False
-            msg = "Gridpower info is back. Router switched back on."
+            msg = "Gridpower info available. Router switched on."
             print(msg)
             syslog.syslog(syslog.LOG_INFO, msg)
+            router_off_no_gridpower_info = False
         if tick_gridpower < TICK_GRIDPOWER_MAX:
             tick_gridpower += 1
 
@@ -451,7 +457,7 @@ try:
         if router_off_no_gridpower_info and routermode.in_auto_mode:
             router.switch_off()
         else:
-            router.set_power(routermode.current_mode, gridpower.currentvalue)
+            router.set_power(routermode, gridpower.currentvalue)
 
 except KeyboardInterrupt: # trap a CTRL+C keyboard interrupt 
     router.switch_off()
