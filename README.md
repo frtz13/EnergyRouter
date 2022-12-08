@@ -26,7 +26,7 @@ The ESPHome home code for the ESP8266 microcontroller, and the wiring diagram ar
 
 ## Energy Router installation
 
-Energy Router can run as a [standalone Python script](https:./ER_Python.md), or can run inside a Home Assistant installation as a [AppDaemon app](https:./AppDaemon/AppDaemon.md). Click on either of these links.
+Energy Router can run as a [standalone Python script](https:.EnergyRouter/ER_Python.md), or can run inside a Home Assistant installation as a [AppDaemon app](https:./EnergyRouter/AppDaemon/AppDaemon.md). Click on either of these links.
 
 ## Energy Router operation
 
