@@ -21,14 +21,21 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="AppDaemon\energy_router.py" />
     <Compile Include="EnergyRouter.py" />
     <Compile Include="syslog.py" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="AppDaemon\AppDaemon.md" />
+    <Content Include="AppDaemon\energy_router.yaml" />
     <Content Include="CHANGELOG" />
     <Content Include="EnergyRouterModel.ini" />
+    <Content Include="ER_Python.md" />
     <Content Include="README.md" />
     <Content Include="solarheat-dimmer.yaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="AppDaemon\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in

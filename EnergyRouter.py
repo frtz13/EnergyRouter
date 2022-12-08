@@ -35,7 +35,7 @@ def read_config():
     global MQTT_TOPIC_DIMMER_ROOT
     global MQTT_TOPIC_DIMMER_POWER
     global MQTT_TOPIC_DIMMER_STATUS
-    global MAX_DIMMER_POURCENTAGE
+    global MAX_DIMMER_PERCENTAGE
     global MQTT_TOPIC_ROUTERMODE
     global MQTT_TOPIC_DIMMER_ONLINE
     global LOAD_MAX_POWER
@@ -54,7 +54,7 @@ def read_config():
         MQTT_TOPIC_DIMMER_ROOT = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ROOT")
         MQTT_TOPIC_DIMMER_POWER = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_POWER")
         MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_STATUS")
-        MAX_DIMMER_POURCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_PERCENTAGE"))
+        MAX_DIMMER_PERCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_PERCENTAGE"))
         MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
         MQTT_TOPIC_DIMMER_ONLINE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
 
@@ -298,7 +298,6 @@ class Router:
             pass
 
     def _publish_status(self, lastPower, dimmerLoad, pDiff, iDiff):
-    # publish current gridpower, dimmersetting, _dimmersum
         dictPayload = {
             "gridpower_W": lastPower,
             "dimmer": dimmerLoad,
@@ -440,7 +439,7 @@ try:
     
     gridpower = GridPower()
     routermode = RouterMode()
-    router = Router(MQTT_client, MAX_DIMMER_POURCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
+    router = Router(MQTT_client, MAX_DIMMER_PERCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
     cnt_readregul = 0
     tick_gridpower = 0
     router_off_no_gridpower_info = None

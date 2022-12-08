@@ -26,29 +26,15 @@ The ESPHome home code for the ESP8266 microcontroller, and the wiring diagram ar
 
 ## Energy Router installation
 
-Copy EnergyRouter.py and EnergyRouterModel.ini to some folder. Copy or rename EnergyRouterModel.ini to EnergyRouter.ini.
+Energy Router can run as a [standalone Python script](https:./ER_Python.md), or can run inside a Home Assistant installation as a [AppDaemon app](https:./AppDaemon/AppDaemon.md). Click on either of these links.
 
-### Parameters
+## Energy Router operation
 
-#### [mqtt] section
+The router is controlled by the payload of the mode topic (RouterMode parameter). This is typically a retained mqtt topic.
 
-Configure access to your MQTT broker.
+A value of -1 means *automatic mode*. When the gridpower value is negative, the router will try send as much power as possible to the water heater, while keeping the gridpower negative. More precisely: keeping it close the the gridpower_bias value given in the parameters.
 
-#### [grid] section
-
-Enter the MQTT topic, where the power consumption/injection of the household is available.
-
-#### [dimmer] section
-
-Set parameters in this section according to your ESPHome code.
-
-MAX_PERCENTAGE: you can set the maximum power you want to allow to the water heater.
-
-MQTT_TOPIC_DIMMER_STATUS: in DEBUG mode, the Energy Router sends internal values via this MQTT topic.
-
-#### [regulation] section
-
-### Energy Router operation
+A value of 0...100 means *manual mode*, meaning that the router will send this percentage of power to the water heater, regardless of the gridpower value. This should be handy in bad weather conditions.
 
 ## Home Assistant integration
 
