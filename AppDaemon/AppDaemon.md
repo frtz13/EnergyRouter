@@ -1,6 +1,6 @@
 # Running Energy Router in AppDaemon
 
-Install AppDaemon from the Community Add-in store, if not already done.
+Install AppDaemon from the Community Add-on store, if you did not already.
 
 ## Configure AppDaemon
 
@@ -55,25 +55,23 @@ logs: make sure to also create a "logs"-folder in /config/appdaemon to provide a
 
 When done, restart AppDaemon.
 
-Open its web interface on port 5050, and have a look at the main log.
+Open its web interface on port 5050, and have a look at the main log. It is important to configure the MQTT-plugin correctly, so that it starts up smoothely. Check in the `main`log.
 
 ## Install Energy Router
 
 Copy `energy_router.py` and `energy_router.yaml` from the AppDeamon folder of this repository to the /config/appdaemon/apps folder of your H.A. installation.
 
-Note: you can use *File editor* to upload files from your workstation to your H.A. installation.
+Note: you can use *File editor* add-on to upload files from your workstation to your H.A. installation.
 
 ## Configure Energy Router
 
-Open energy_router.yaml in a text editor.
+Open energy_router.yaml in your favourite text editor. AddDaemon will restart the Energy Router as soon as you save the file.
 
 go: switches the Energy Router on or off.
 
-sensor_gridpower: enter the name of the sensor showing the real power consumed by the household. Power should be in W. Positive values for consumption, négative values for sending power into the public electricity grid.
+sensor_gridpower: enter the name of the sensor connected to your energy meter, returning the power consumed by the household. Power should be in W. Positive values for consumption, négative values for sending power into the public electricity grid. However, the preferred method is to get the energy meter readings directly from the MQTT broker, if this is possible. Enter the MQTT topic used by the energy meter reading.
 
-MQTT topics must be set according to the configuration of the dimmer, and the H.A. entities controlling the router.
-
-The other parameters can be adjusted later.
+See README.md for more configuraton parameters.
 
 ## First run
 
@@ -81,7 +79,7 @@ Open the AppDaemon web interface on port 5050. Go to the logs page, select the e
 
 It should say that Energy Router is disabled.
 
-In energy_router.yaml, set the *go* parameter to 1 and save the file.
+In energy_router.yaml, set the `go` parameter to 1 and save the file.
 
 The Energy Router should start (watch the log file). There should be a couple of lines in the log:
 

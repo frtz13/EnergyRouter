@@ -7,37 +7,38 @@ energy_router:
   go: 0
 
 # debug or normal
-#  loglevel: debug
+  loglevel: debug
 #  loglevel: normal
 
-
+# two ways to get gridpower.
+# choose one method. comment out the other.
+# the mqtt topic to get the gridpower
+#  mqtt_topic_gridpower : shellies/tableau_elec/emeter/0/power
 # the name of the sensor for grid power
-  sensor_gridpower: sensor.house_real_power
+#  sensor_gridpower: sensor.house_real_power
 
 # regulation constants. 25 for both values is a good starting point
   regul_prop: 25
   regul_integ: 25
 
 # limit maximum power sent to the load
-  max_dimmer_percentage: 70
+  max_dimmer_percentage: 100
 
 # load connected to dimmer
-  load_max_power_w: 1700
+  load_max_power_w: 2000
 
 # regulation tries to stabilize gridpower to this value 
   gridpower_bias_w: -5
 
-# set according to mqtt parameters for the EspHome project
 # mqtt base topic to communicate with the dimmer
   mqtt_topic_dimmer_root: home/solarheat-dimmer
-# commands for the dimmer sent to this topic
-  mqtt_topic_dimmer_power: power
-# dimmer online info
-  mqtt_topic_dimmer_online: DimmerLWT
-# in debug mode, status info is sent to this topic
-  mqtt_topic_dimmer_status: status
 
-# the Energy Router gets commands on this topic
+  mqtt_topic_dimmer_power: power
+
+  # in debug mode, status info is sent to this topic
+  mqtt_topic_dimmer_status: status
+  mqtt_topic_dimmer_online: DimmerLWT
   mqtt_topic_routermode: mode
-# EnergyRouter online/offline mqtt topic
+
+  # EnergyRouter online/offline mqtt topic
   mqtt_topic_router_online: RouterLWT
