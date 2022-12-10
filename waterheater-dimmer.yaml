@@ -1,6 +1,6 @@
 substitutions:
-  node_name: solarheat-dimmer
-  mqtt_topic: home/solarheat-dimmer
+  node_name: waterheater-dimmer
+  mqtt_topic: home/waterheater-dimmer
 
 esphome:
   name: ${node_name}
@@ -8,7 +8,7 @@ esphome:
   on_boot:
     priority: 600
     then:
-      - light.turn_off: solarheat_dimmer
+      - light.turn_off: waterheater_dimmer
 
 esp8266:
   board: d1_mini
@@ -45,59 +45,25 @@ mqtt:
     topic: ${mqtt_topic}/power
     then:
       - light.turn_on:
-          id: solarheat_dimmer
+          id: waterheater_dimmer
           brightness: !lambda |-
             float dim = 0;
-            if (id(enable_light))
-              {
+            {
               if (x.containsKey("dim_percent"))
                 dim = x["dim_percent"];
               return dim / 100;
-              }
-            else
-            {
-              ESP_LOGW("Dimmer", "Dimmer disabled");
-              return 0;
             }
       - script.execute: dimmer_watchdog
 
-globals:
-   - id: enable_light
-     type: bool
-     restore_value: no
-     initial_value: 'true'
-     # we should set this to 'false' so dimmer won't start without ZC
-     # in fact, we need to check if it actually does
-     # but this does not seem to work
-
+# the watchdog will switch off the Dimmer
+# when the energy router is not running
 script:
   - id: dimmer_watchdog
     mode: restart
     then:
       - delay: 1 min
-      - light.turn_off: solarheat_dimmer
+      - light.turn_off: waterheater_dimmer
       - logger.log: "dimmer reset to 0 by watchdog"
-
-  - id: zc_watchdog
-    mode: restart
-    then:
-      - globals.set:
-          id: enable_light
-          value: 'true'
-      - delay: 200 ms
-      - globals.set:
-          id: enable_light
-          value: 'false'
-      - light.turn_off: solarheat_dimmer
-      - logger.log: "dimmer reset to 0 by zc watchdog"
-
-#binary_sensor:
-#    platform: gpio
-#    pin: GPIO14
-#    name: zc
-#    on_press:
-#      then:
-#        - script.execute: zc_watchdog
 
 output:
   - platform: ac_dimmer
@@ -114,10 +80,11 @@ output:
 light:
   - platform: monochromatic
     output: dimmer1
-    name: "Solarheat Dimmer"
-    id: solarheat_dimmer
+    name: "Waterheater Dimmer"
+    id: waterheater_dimmer
     default_transition_length: 0s
     gamma_correct: 1.0
+    restore_mode: ALWAYS_OFF
 
 sensor:
   - platform: wifi_signal

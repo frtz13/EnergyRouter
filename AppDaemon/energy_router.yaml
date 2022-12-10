@@ -13,7 +13,7 @@ energy_router:
 # two ways to get gridpower.
 # choose one method. comment out the other.
 # the mqtt topic to get the gridpower
-#  mqtt_topic_gridpower : shellies/tableau_elec/emeter/0/power
+#  mqtt_topic_gridpower : shellies/house/emeter/0/power
 # the name of the sensor for grid power
 #  sensor_gridpower: sensor.house_real_power
 
@@ -31,7 +31,7 @@ energy_router:
   gridpower_bias_w: -5
 
 # mqtt base topic to communicate with the dimmer
-  mqtt_topic_dimmer_root: home/solarheat-dimmer
+  mqtt_topic_dimmer_root: home/waterheater-dimmer
 
   mqtt_topic_dimmer_power: power
 
