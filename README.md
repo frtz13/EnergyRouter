@@ -18,4 +18,4 @@ The blue line corresponds to the power sent to the water heater (multiplied by -
 
 ![](./img/regulation.png)
 
-For more information how to put this together, please see the [wiki](./EnergyRouter/wiki).
+For more information how to put this together, please see the [wiki](https:./EnergyRouter/wiki).
