@@ -31,6 +31,7 @@
     <Content Include="Dimmer-wiring.pdf" />
     <Content Include="EnergyRouterModel.ini" />
     <Content Include="img\regulation.png" />
+    <Content Include="img\overview.png" />
     <Content Include="README.md" />
     <Content Include="waterheater-dimmer.yaml" />
   </ItemGroup>
