@@ -26,7 +26,7 @@ broker will be very helpful. This lets you control the operation of the whole th
 The **dimmer**. You will need some basic electronic skills to assemble
 it yourself. You will also need to program its ESP8266 micro controller with ESPHome, which is also available as an add-on for Home Assistant.
 
-![](C:\Users\fritz\source\repos\EnergyRouter\img\overview.png)
+![](./img/overview.png)
 
 Note (*): The preferred way for the energy meter communication is shown in the diagram. With Home Assistant, the Energy Router can also get energy meter readings from a Sensor state.
 
