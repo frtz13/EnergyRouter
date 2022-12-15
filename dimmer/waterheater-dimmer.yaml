@@ -1,3 +1,7 @@
+# frtz13/EnergyRouter project
+# EspHome code for dimmer
+# v. 2022.12.15
+
 substitutions:
   node_name: waterheater-dimmer
   mqtt_topic: home/waterheater-dimmer
@@ -48,11 +52,9 @@ mqtt:
           id: waterheater_dimmer
           brightness: !lambda |-
             float dim = 0;
-            {
-              if (x.containsKey("dim_percent"))
-                dim = x["dim_percent"];
-              return dim / 100;
-            }
+            if (x.containsKey("dim_percent"))
+            dim = x["dim_percent"];
+            return dim / 100;
       - script.execute: dimmer_watchdog
 
 # the watchdog will switch off the Dimmer
@@ -74,8 +76,8 @@ output:
       number: GPIO14 #D5
       mode: INPUT
       inverted: no
-    max_power: 70%
-    min_power: 10%
+    max_power: 100%
+    min_power: 0%
 
 light:
   - platform: monochromatic

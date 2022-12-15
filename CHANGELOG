@@ -1,4 +1,8 @@
-9/12/2022
+2022.12.15
+- AppDaemon v. 2022.12.15 : tick_gridpower declaration
+- EspHome code: ac_dimmer min/max percentages set to 0% and 100%
+
+2022.12.09
 - AppDaemon version (2022.12.09)
 - README.md etc.
 

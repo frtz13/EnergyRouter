@@ -17,8 +17,10 @@ import asyncio
 import json
 import mqttapi as mqtt
 
-SCRIPT_VERSION = "2022.12.09"
+SCRIPT_VERSION = "2022.12.15"
 LOGLEVEL_DEBUG = "debug"
+
+tick_gridpower = 0
 
 class EnergyRouter(hass.Hass, mqtt.Mqtt):
     async def initialize(self):
@@ -304,17 +306,17 @@ class Router:
 # =================== GridPower ================
 class GridPower:
     def __init__(self):
-        self._arr_gridpower = None
+        self._gridpower = None
 
     def setvalue(self, new):
         global tick_gridpower
 
-        self._arr_gridpower = new
+        self._gridpower = new
         tick_gridpower = 0
 
     @property
     def currentvalue(self):
-        return self._arr_gridpower
+        return self._gridpower
 
 # ================== RouterMode =====================
 class RouterMode:
