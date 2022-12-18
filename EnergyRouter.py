@@ -24,7 +24,7 @@ import math
 # from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "20221205"
+SCRIPT_VERSION = "2022.12.18"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -52,6 +52,7 @@ def read_config():
     global MQTT_TOPIC_ROUTERMODE
     global MQTT_TOPIC_DIMMER_ONLINE
     global LOAD_MAX_POWER
+    global OPEN_LOOP_GAIN_RAW
 
     try:
         confparser = configparser.RawConfigParser()
@@ -74,6 +75,21 @@ def read_config():
         LOAD_MAX_POWER =  int(confparser.get(CONFIGSECTION_REGUL, "LOAD_MAX_POWER_W"))
         if LOAD_MAX_POWER < 10:
             raise Exception("Need reasonable value for LOAD_MAX_POWER_W (> 10).")
+
+        try:
+            olg_raw = confparser.get(CONFIGSECTION_REGUL, "regul_o_l_gain_raw")
+            olg_raw_list = list(olg_raw.split(","))
+            OPEN_LOOP_GAIN_RAW = [eval(i) for i in olg_raw_list]
+            if len(OPEN_LOOP_GAIN_RAW) != 9:
+                raise Exception("list must contain 9 numbers")
+            OPEN_LOOP_GAIN_RAW.insert(0, 0)
+            OPEN_LOOP_GAIN_RAW.append(100)
+            if not strictly_increasing(OPEN_LOOP_GAIN_RAW):
+                raise Exception("list of values must be strictly increasing, with values > 0 and < 100")
+        except Exception as e:
+            print(f"Error reading raw normalized open loop gain values ({e}).")
+            print("Default linear power function used.")
+            OPEN_LOOP_GAIN_RAW = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 
         return True
     except Exception as e:
@@ -101,6 +117,7 @@ def read_config_regul():
             GRIDPOWER_BIAS = float(confparser.get(CONFIGSECTION_REGUL, "gridpower_bias"))
         except Exception:
             GRIDPOWER_BIAS = 0
+
 
         REGUL_Changed = (old_prop != REGUL_PROP) and (old_prop is not None)
         REGUL_Changed = REGUL_Changed or ((old_integ != REGUL_INTEG) and (old_integ is not None))
@@ -225,6 +242,8 @@ def on_message_dimmeronline(client, userdata, msg):
 def inbetween(minv, val, maxv):
     return min(maxv, max(minv, val))
 
+def strictly_increasing(L):
+    return all(x<y for x, y in zip(L, L[1:]))
 
 class Router:
     def __init__(self, mqttclient, maxdimmerpourcentage, prop, integ, gridpower_bias):
@@ -253,9 +272,13 @@ class Router:
         if routermode.in_auto_mode:
             self._set_power_auto(gridpower)
         else:
-            _dimpercent = inbetween(0, routermode.current_mode, 100)
-            _dimpercent = int(_dimpercent * 10) / 10
-            self._setdimmer(_dimpercent)
+            _loadpercent = routermode.current_mode
+            if _loadpercent >= 0:
+                _dimpercent = self._get_dimmerpercent(_loadpercent)
+                _dimpercent = int(_dimpercent * 10) / 10
+                self._setdimmer(_dimpercent, _loadpercent)
+            else:
+                self._setdimmer(_loadpercent, _loadpercent)
 
     def _set_power_auto(self, gridpower):
         if gridpower is None:
@@ -269,25 +292,25 @@ class Router:
 
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
-            _dimmerpercent = inbetween(0, pDiff + iDiff, 100)
-            _dimmerpercent = int(_dimmerpercent * 10) / 10
-            self._setdimmer(_dimmerpercent)
+            _loadpercent = inbetween(0, pDiff + iDiff, 100)
+            _dimmerpercent = self._get_dimmerpercent(_loadpercent)
+            _dimmerpercent = int(_dimmerpercent * 100) / 100
+            self._setdimmer(_dimmerpercent, _loadpercent)
             if LOGLEVEL == LOGLEVEL_DEBUG:
                 self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
-#    def _get_dimmerpercent(self, loadpercent):
-        # calculate the dimmer% we need to get loadpercent * POWERFUNC[1] output power
-        # we look for the corresponding interval in the POWERFUNC
-        # then we make a linear interpolation
-        #power_lin = loadpercent * POWERFUNC[-1] / 100
-        #for i in range(len(POWERFUNC)):
-        #    if power_lin <= POWERFUNC[i]:
-        #        dimpercent = 10 * ( i - 1 + (power_lin - POWERFUNC[i-1]) / (POWERFUNC[i] - POWERFUNC[i-1]))
-        #        return dimpercent
-        #return 100
+    def _get_dimmerpercent(self, loadpercent):
+         # calculate the dimmer% we need to get loadpercent output power percentage
+         # we look for the corresponding interval among the points of the open_loop_gain_raw points
+         # then we make a linear interpolation
+        olg_raw = OPEN_LOOP_GAIN_RAW
+        for i in range(len(olg_raw)):
+            if loadpercent <= olg_raw[i]:
+                dimpercent = 10 * ( i - 1 + (loadpercent - olg_raw[i-1]) / (olg_raw[i] - olg_raw[i-1]))
+                return dimpercent
+        return 100
 
-
-    def _setdimmer(self, percent):
+    def _setdimmer(self, percent, loadpercent):
 #   dim_percent is used by the dimmer
 #   load_percent can be used to display percentage of power provided by the dimmer
 #   only publish every 10th dimmerload value, unless its value changes
@@ -300,7 +323,7 @@ class Router:
                 if self._mqttclient.connected_flag:
                     dictPayload = {
                         "dim_percent": percent,
-                        "power_estim": int(percent * LOAD_MAX_POWER / 100),
+                        "power_estim": int(loadpercent * LOAD_MAX_POWER / 100),
                         }
                     res = self._mqttclient.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_POWER, json.dumps(dictPayload), 0, False)
                     self._cnt_set_dimmer = 0
@@ -313,6 +336,7 @@ class Router:
     def _publish_status(self, lastPower, dimmerLoad, pDiff, iDiff):
         dictPayload = {
             "gridpower_W": lastPower,
+            "tick": tick_gridpower,
             "dimmer": dimmerLoad,
             "sum": self._routersum,
             "pDiff": pDiff,
@@ -330,7 +354,7 @@ class Router:
             pass
 
     def switch_off(self):
-        self._setdimmer(0)
+        self._setdimmer(0, 0)
         return
 
 
@@ -358,7 +382,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-1, int(float(newvalue.decode("ascii"))), 100)
+            self._current_mode = inbetween(-100, int(float(newvalue.decode("ascii"))), 100)
         except Exception as e:
             msg = (f"[Error] [Set Routermode] {e}")
             print(msg)
@@ -391,7 +415,7 @@ def read_regul():
 
 
 def check_gridpower_info():
-    TICK_GRIDPOWER_MAX = 60 #seconds
+    TICK_GRIDPOWER_MAX = 120 #seconds
 
     global router_off_no_gridpower_info
     global tick_gridpower

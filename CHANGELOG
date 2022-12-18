@@ -1,5 +1,12 @@
+2022.12.18
+- AppDaemon app v. 2022.12.18: make open loop gain linear
+- EspHome code v. 2022.12.18:
+  - version number visible in web interface
+  - new parameters for AC Dimmer output (min 5%, max 100%)
+- standalone version v. 2022.12.18: make open loop gain linear
+
 2022.12.15
-- AppDaemon v. 2022.12.15 : tick_gridpower declaration
+- AppDaemon app v. 2022.12.15 : tick_gridpower declaration
 - EspHome code: ac_dimmer min/max percentages set to 0% and 100%
 
 2022.12.09

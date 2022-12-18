@@ -1,8 +1,8 @@
 # frtz13/EnergyRouter project
 # EspHome code for dimmer
-# v. 2022.12.15
 
 substitutions:
+  version: "2022.12.18"
   node_name: waterheater-dimmer
   mqtt_topic: home/waterheater-dimmer
 
@@ -65,7 +65,9 @@ script:
     then:
       - delay: 1 min
       - light.turn_off: waterheater_dimmer
-      - logger.log: "dimmer reset to 0 by watchdog"
+      - logger.log:
+          format: "Dimmer reset to 0 by watchdog"
+          level: INFO
 
 output:
   - platform: ac_dimmer
@@ -77,7 +79,7 @@ output:
       mode: INPUT
       inverted: no
     max_power: 100%
-    min_power: 0%
+    min_power: 5%
 
 light:
   - platform: monochromatic
@@ -122,3 +124,6 @@ text_sensor:
     id: uptime_human
     icon: mdi:clock-start
     retain: false
+
+  - platform: template
+    name: ${node_name} v. ${version}

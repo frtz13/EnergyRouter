@@ -17,7 +17,7 @@ import asyncio
 import json
 import mqttapi as mqtt
 
-SCRIPT_VERSION = "2022.12.15"
+SCRIPT_VERSION = "2022.12.18"
 LOGLEVEL_DEBUG = "debug"
 
 tick_gridpower = 0
@@ -41,6 +41,10 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
     def _readparms(self):
         try:
             self._parm_go = (int(self.args["go"]) != 0)
+            try:
+                self._parm_LOGLEVEL = self.args["loglevel"]
+            except:
+                self._parm_LOGLEVEL = "normal"
             try:
                 self._parm_mqtt_topic_gridpower = self.args["mqtt_topic_gridpower"]
                 if len(self._parm_mqtt_topic_gridpower) == 0:
@@ -67,10 +71,23 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
             self._parm_mqtt_topic_dimmer_online = self.args["mqtt_topic_dimmer_online"]
             self._parm_mqtt_topic_routermode = self.args["mqtt_topic_routermode"]
             self._parm_mqtt_topic_router_online = self.args["mqtt_topic_router_online"]
+            
             try:
-                self._parm_LOGLEVEL = self.args["loglevel"]
-            except:
-                self._parm_LOGLEVEL = "normal"
+                pf = self.args["regul_o_l_gain_raw"]
+                pflist = list(pf.split(","))
+                self._parm_o_l_gain_raw = [eval(i) for i in pflist]
+                if len(self._parm_o_l_gain_raw) != 9:
+                    raise Exception("list must contain 9 numbers")
+                self._parm_o_l_gain_raw.insert(0, 0)
+                self._parm_o_l_gain_raw.append(100)
+                if not strictly_increasing(self._parm_o_l_gain_raw):
+                    raise Exception("list of values must be strictly increasing, with values > 0 and < 100")
+            except Exception as e:
+                self.log(f"Error reading raw normalized open loop gain values ({e}).")
+                self.log("Default linear function used.")
+                self._parm_o_l_gain_raw = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+            if self._parm_LOGLEVEL == LOGLEVEL_DEBUG:
+                self.log(f"power function: {self._parm_o_l_gain_raw}")
             return True
         except Exception as e:
             self.log(f"[error] reading parameters: {e}")
@@ -167,7 +184,7 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
                 await self._router.set_power(self._routermode, self._gridpower.currentvalue)
 
     def check_gridpower_info(self):
-        TICK_GRIDPOWER_MAX = 60 #seconds
+        TICK_GRIDPOWER_MAX = 120 #seconds
 
         global tick_gridpower
 
@@ -202,6 +219,8 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
 def inbetween(minv, val, maxv):
     return min(maxv, max(minv, val))
 
+def strictly_increasing(L):
+    return all(x<y for x, y in zip(L, L[1:]))
 
 # ================= Router ==================
 class Router:
@@ -231,9 +250,13 @@ class Router:
         if routermode.in_auto_mode:
             await self._set_power_auto(gridpower)
         else:
-            _dimpercent = inbetween(0, routermode.current_mode, 100)
-            _dimpercent = int(_dimpercent * 10) / 10
-            await self._setdimmer(_dimpercent)
+            _loadpercent = routermode.current_mode
+            if _loadpercent >= 0:
+                _dimpercent = self._get_dimmerpercent(_loadpercent)
+                _dimpercent = int(_dimpercent * 10) / 10
+                await self._setdimmer(_dimpercent, _loadpercent)
+            else:
+                await self._setdimmer(-_loadpercent, -_loadpercent)
 
     async def _set_power_auto(self, gridpower):
         if gridpower is None:
@@ -247,13 +270,25 @@ class Router:
 
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
-            _dimmerpercent = inbetween(0, pDiff + iDiff, 100)
-            _dimmerpercent = int(_dimmerpercent * 10) / 10
-            await self._setdimmer(_dimmerpercent)
+            _loadpercent = inbetween(0, pDiff + iDiff, 100)
+            _dimmerpercent = self._get_dimmerpercent(_loadpercent)
+            _dimmerpercent = int(_dimmerpercent * 100) / 100
+            await self._setdimmer(_dimmerpercent, _loadpercent)
             if self._parent._parm_LOGLEVEL == LOGLEVEL_DEBUG:
                 await self._publish_status(gridpower, _dimmerpercent, pDiff, iDiff)
 
-    async def _setdimmer(self, percent):
+    def _get_dimmerpercent(self, loadpercent):
+        # calculate the dimmer% we need to get loadpercent output power percentage
+        # we look for the corresponding interval among the points of the _parm_o_l_gain
+        # then we make a linear interpolation
+        olg_raw = self._parent._parm_o_l_gain_raw
+        for i in range(len(olg_raw)):
+            if loadpercent <= olg_raw[i]:
+                dimpercent = 10 * ( i - 1 + (loadpercent - olg_raw[i-1]) / (olg_raw[i] - olg_raw[i-1]))
+                return dimpercent
+        return 100
+
+    async def _setdimmer(self, percent, loadpercent):
 #   only publish every 10th dimmerload value, unless its value changes
         CNT_MAX = 10
         try:
@@ -264,7 +299,7 @@ class Router:
                 if self._parent.is_client_connected():
                     dictPayload = {
                         "dim_percent": percent,
-                        "power_estim": int(percent * self._parent._parm_load_max_power / 100),
+                        "power_estim": int(loadpercent * self._parent._parm_load_max_power / 100),
                         }
                     await self._parent.mqtt_publish(
                         topic=self._parent._parm_mqtt_topic_dimmer_root + "/" + self._parent._parm_mqtt_topic_dimmer_power,
@@ -300,7 +335,7 @@ class Router:
             self._parent.log(f"[exception] publish status: {e}")
 
     async def switch_off(self):
-        await self._setdimmer(0)
+        await self._setdimmer(0,0)
         return
 
 # =================== GridPower ================
@@ -329,7 +364,7 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-1, int(float(newvalue)), 100)
+            self._current_mode = inbetween(-100, int(float(newvalue)), 100)
 #            self._hass.log(f"Set Routermode: {self._current_mode}")
         except Exception as e:
             self._hass.log(f"[Error] [Set Routermode] {e}")

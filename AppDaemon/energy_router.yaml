@@ -21,6 +21,10 @@ energy_router:
   regul_prop: 25
   regul_integ: 25
 
+# raw normalized open loop gain at 10%, 20% ... 90%
+# don't touch unless you know what you are doing
+  regul_o_l_gain_raw: 6.5, 15.9, 24.9, 39.2, 50.9, 60.2, 73.5, 84.9, 93.3
+
 # limit maximum power sent to the load
   max_dimmer_percentage: 100
 
@@ -34,11 +38,11 @@ energy_router:
   mqtt_topic_dimmer_root: home/waterheater-dimmer
 
   mqtt_topic_dimmer_power: power
-
-  # in debug mode, status info is sent to this topic
-  mqtt_topic_dimmer_status: status
   mqtt_topic_dimmer_online: DimmerLWT
   mqtt_topic_routermode: mode
 
-  # EnergyRouter online/offline mqtt topic
+# in debug mode, status info is sent to this topic
+  mqtt_topic_dimmer_status: status
+
+# EnergyRouter online/offline mqtt topic
   mqtt_topic_router_online: RouterLWT
