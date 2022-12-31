@@ -1,0 +1,48 @@
+energy_router:
+  module: energy_router
+  class: EnergyRouter
+  log: energyrouter_log
+
+# go: 1 = activate EnergyRouter, 0 to disable it
+  go: 0
+
+# debug or normal
+  loglevel: debug
+#  loglevel: normal
+
+# two ways to get gridpower.
+# choose one method. comment out the other.
+# the mqtt topic to get the gridpower
+#  mqtt_topic_gridpower : shellies/house/emeter/0/power
+# the name of the sensor for grid power
+#  sensor_gridpower: sensor.house_real_power
+
+# regulation constants. 25 for both values is a good starting point
+  regul_prop: 25
+  regul_integ: 25
+
+# raw normalized open loop gain at 10%, 20% ... 90%
+# don't touch unless you know what you are doing
+  regul_o_l_gain_raw: 6.5, 15.9, 24.9, 39.2, 50.9, 60.2, 73.5, 84.9, 93.3
+
+# limit maximum power sent to the load
+  max_dimmer_percentage: 100
+
+# load connected to dimmer
+  load_max_power_w: 2000
+
+# regulation tries to stabilize gridpower to this value 
+  gridpower_bias_w: -5
+
+# mqtt base topic to communicate with the dimmer
+  mqtt_topic_dimmer_root: home/waterheater-dimmer
+
+  mqtt_topic_dimmer_power: power
+  mqtt_topic_dimmer_online: DimmerLWT
+  mqtt_topic_routermode: mode
+
+# in debug mode, status info is sent to this topic
+  mqtt_topic_dimmer_status: status
+
+# EnergyRouter online/offline mqtt topic
+  mqtt_topic_router_online: RouterLWT
