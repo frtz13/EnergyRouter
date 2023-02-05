@@ -24,7 +24,7 @@ import math
 # from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "2022.12.18"
+SCRIPT_VERSION = "2023.01.28"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -51,7 +51,9 @@ def read_config():
     global MAX_DIMMER_PERCENTAGE
     global MQTT_TOPIC_ROUTERMODE
     global MQTT_TOPIC_DIMMER_ONLINE
+    global MQTT_TOPIC_DIM_MAX_POWER
     global LOAD_MAX_POWER
+    global DIM_MAX_POWER
     global OPEN_LOOP_GAIN_RAW
 
     try:
@@ -67,14 +69,25 @@ def read_config():
 
         MQTT_TOPIC_DIMMER_ROOT = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ROOT")
         MQTT_TOPIC_DIMMER_POWER = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_POWER")
-        MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_STATUS")
-        MAX_DIMMER_PERCENTAGE = int(confparser.get(CONFIGSECTION_DIMMER, "MAX_PERCENTAGE"))
-        MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_ROUTERMODE")
-        MQTT_TOPIC_DIMMER_ONLINE =  confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
+        MQTT_TOPIC_DIMMER_STATUS = confparser.get(CONFIGSECTION_REGUL, "MQTT_TOPIC_DIMMER_STATUS")
+        MQTT_TOPIC_ROUTERMODE =  confparser.get(CONFIGSECTION_REGUL, "MQTT_TOPIC_ROUTERMODE")
+        MQTT_TOPIC_DIMMER_ONLINE = confparser.get(CONFIGSECTION_DIMMER, "MQTT_TOPIC_DIMMER_ONLINE")
+
+        try:
+            MQTT_TOPIC_DIM_MAX_POWER = confparser.get(CONFIGSECTION_REGUL, "MQTT_TOPIC_DIM_MAX_POWER")
+        except Exception:
+            MQTT_TOPIC_DIM_MAX_POWER = ""
 
         LOAD_MAX_POWER =  int(confparser.get(CONFIGSECTION_REGUL, "LOAD_MAX_POWER_W"))
         if LOAD_MAX_POWER < 10:
             raise Exception("Need reasonable value for LOAD_MAX_POWER_W (> 10).")
+
+        try:
+            DIM_MAX_POWER = int(confparser.get(CONFIGSECTION_REGUL, "DIM_MAX_POWER_W"))
+            if (DIM_MAX_POWER <10) or (DIM_MAX_POWER > LOAD_MAX_POWER):
+                raise Exception(f"Need reasonable value for {DIM_MAX_POWER} (> 10 and not more than {LOAD_MAX_POWER}).")
+        except Exception:
+            DIM_MAX_POWER = LOAD_MAX_POWER
 
         try:
             olg_raw = confparser.get(CONFIGSECTION_REGUL, "regul_o_l_gain_raw")
@@ -118,7 +131,6 @@ def read_config_regul():
         except Exception:
             GRIDPOWER_BIAS = 0
 
-
         REGUL_Changed = (old_prop != REGUL_PROP) and (old_prop is not None)
         REGUL_Changed = REGUL_Changed or ((old_integ != REGUL_INTEG) and (old_integ is not None))
         REGUL_Changed = REGUL_Changed or ((old_gridpower_bias != GRIDPOWER_BIAS) and (old_gridpower_bias is not None))
@@ -147,11 +159,14 @@ def on_MQTTconnect(client, userdata, flags, rc):
         try:
             client.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_ONLINE, 0, retain=True)
 #            print("mqtt subscription")
-            subscr_result = client.subscribe([
-                (MQTT_TOPIC_GRIDPOWER,0),
+            mqttsubscr = [
+                (MQTT_TOPIC_GRIDPOWER, 0),
                 (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, 0),
                 (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, 0)
-            ])
+            ]
+            if len(MQTT_TOPIC_DIM_MAX_POWER) > 0:
+                mqttsubscr.append( (MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIM_MAX_POWER, 0) )
+            subscr_result = client.subscribe(mqttsubscr)
             if subscr_result[0] != 0:
                 print("[error] mqtt subscription failed: " + subscr_result[0])
         except:
@@ -185,6 +200,8 @@ def MQTT_connect(client):
     client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
     client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, on_message_routermode)
     client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, on_message_dimmeronline)
+    if len(MQTT_TOPIC_DIM_MAX_POWER) > 0:
+        client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIM_MAX_POWER, on_message_dim_max_power)
     client.will_set(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
     if len(MQTT_USERNAME) > 0:
         client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
@@ -220,7 +237,10 @@ def on_message(client, userdata, msg):
 
 def on_message_gridpower(client, userdata, msg):
     global gridpower
-    gridpower.setvalue(float(msg.payload))
+    try:
+        gridpower.setvalue(float(msg.payload))
+    except Exception:
+        print(f"[error] got invalid gridpower value via MQTT: {msg.payload}")
 
 def on_message_routermode(client, userdata, msg):
     global routermode
@@ -238,6 +258,16 @@ def on_message_dimmeronline(client, userdata, msg):
         print(mess)
         syslog.syslog(syslog.LOG_INFO, mess)
 
+def on_message_dim_max_power(client, userdata, msg):
+    global router
+    try:
+        router.set_dim_max_power(float(msg.payload))
+        mess = f"Got {MQTT_TOPIC_DIM_MAX_POWER} (MQTT): {float(msg.payload)}"
+        print(mess)
+        syslog.syslog(syslog.LOG_INFO, mess)
+    except Exception:
+        print(f"Got invalid MQTT payload for {MQTT_TOPIC_DIM_MAX_POWER}")
+
 
 def inbetween(minv, val, maxv):
     return min(maxv, max(minv, val))
@@ -245,13 +275,15 @@ def inbetween(minv, val, maxv):
 def strictly_increasing(L):
     return all(x<y for x, y in zip(L, L[1:]))
 
+
 class Router:
-    def __init__(self, mqttclient, maxdimmerpourcentage, prop, integ, gridpower_bias):
+    def __init__(self, mqttclient, prop, integ, gridpower_bias):
         self._routersum = 0
+        self._dim_max_power = LOAD_MAX_POWER
         self.set_prop(prop)
         self.set_integ(integ)
+        self.set_dim_max_power(DIM_MAX_POWER)
         self.set_gridpower_bias(gridpower_bias)
-        self._maxdimmerpourcentage = maxdimmerpourcentage
         self._mqttclient = mqttclient
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
@@ -262,9 +294,14 @@ class Router:
 
     def set_integ(self, value):
         self._integ = value / LOAD_MAX_POWER
+        self.set_dim_max_power(self._dim_max_power)
 
     def set_gridpower_bias(self, value):
         self._gridpower_bias = value
+
+    def set_dim_max_power(self, value):
+        self._rsummax = 100 * value / LOAD_MAX_POWER / self._integ
+        self._dim_max_power = value
 
     def set_power(self, routermode, gridpower):
         if not DIMMER_IS_ONLINE:
@@ -286,10 +323,11 @@ class Router:
         else:
             diff = -gridpower + self._gridpower_bias
             self._routersum = self._routersum + diff
-
-            _rsummax = self._maxdimmerpourcentage / self._integ
+            if self._dim_max_power == LOAD_MAX_POWER:
+                _rsummax = self._rsummax
+            else:
+                _rsummax = self._rsummax - diff
             self._routersum = inbetween(-100, self._routersum, _rsummax)
-
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
             _loadpercent = inbetween(0, pDiff + iDiff, 100)
@@ -311,8 +349,6 @@ class Router:
         return 100
 
     def _setdimmer(self, percent, loadpercent):
-#   dim_percent is used by the dimmer
-#   load_percent can be used to display percentage of power provided by the dimmer
 #   only publish every 10th dimmerload value, unless its value changes
         CNT_MAX = 10
         try:
@@ -382,7 +418,10 @@ class RouterMode:
 
     def set_mode(self, newvalue):
         try:
-            self._current_mode = inbetween(-1, int(float(newvalue.decode("ascii"))), 100)
+            self._current_mode = inbetween(-100, int(float(newvalue.decode("ascii"))), 100)
+            msg = f"Got RouterMode: {self._current_mode}"
+            print(msg)
+            syslog.syslog(syslog.LOG_WARNING, msg)
         except Exception as e:
             msg = (f"[Error] [Set Routermode] {e}")
             print(msg)
@@ -476,7 +515,7 @@ try:
     
     gridpower = GridPower()
     routermode = RouterMode()
-    router = Router(MQTT_client, MAX_DIMMER_PERCENTAGE, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
+    router = Router(MQTT_client, REGUL_PROP, REGUL_INTEG, GRIDPOWER_BIAS)
     cnt_readregul = 0
     tick_gridpower = 0
     router_off_no_gridpower_info = None

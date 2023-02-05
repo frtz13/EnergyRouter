@@ -1,3 +1,9 @@
+2023.01.29
+- new: dimmer power limit set via MQTT topic payload
+- change: MAX_PERCENTAGE parameter replaced by (optional) DIM_MAX_POWER_W parameter in [regul] section
+- breaking change: MQTT_TOPIC_ROUTER_MODE, MQTT_TOPIC_STATUS parameters moved to [regulation] section
+- minor bug fixes
+
 2022.12.18
 - AppDaemon app v. 2022.12.18: make open loop gain linear
 - EspHome code v. 2022.12.18:

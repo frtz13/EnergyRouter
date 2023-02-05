@@ -25,21 +25,22 @@ energy_router:
 # don't touch unless you know what you are doing
   regul_o_l_gain_raw: 6.5, 15.9, 24.9, 39.2, 50.9, 60.2, 73.5, 84.9, 93.3
 
-# limit maximum power sent to the load
-  max_dimmer_percentage: 100
-
 # load connected to dimmer
   load_max_power_w: 2000
+
+# limit maximum power sent to the load
+  dim_max_power_w: 2000
 
 # regulation tries to stabilize gridpower to this value 
   gridpower_bias_w: -5
 
-# mqtt base topic to communicate with the dimmer
+# mqtt base topic to communicate with dimmer and energy_router
   mqtt_topic_dimmer_root: home/waterheater-dimmer
 
   mqtt_topic_dimmer_power: power
   mqtt_topic_dimmer_online: DimmerLWT
   mqtt_topic_routermode: mode
+  mqtt_topic_dim_max_power: dim_max_power
 
 # in debug mode, status info is sent to this topic
   mqtt_topic_dimmer_status: status

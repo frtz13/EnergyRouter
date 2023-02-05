@@ -17,7 +17,7 @@ import asyncio
 import json
 import mqttapi as mqtt
 
-SCRIPT_VERSION = "2022.12.18"
+SCRIPT_VERSION = "2023.01.28"
 LOGLEVEL_DEBUG = "debug"
 
 tick_gridpower = 0
@@ -27,7 +27,6 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
         self._gridpower = None
         self._router_off_no_gridpower_info = None
         self._confirmed_gridpower = False
-        self._confirmed_routermode = False
         self._router = None
         self.DIMMER_IS_ONLINE = False
         self.log(f"Energy Router start ({SCRIPT_VERSION})")
@@ -62,8 +61,18 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
                 self._parm_sensor_gridpower = None
             self._parm_regul_prop = self.args["regul_prop"]
             self._parm_regul_integ = self.args["regul_integ"]
-            self._parm_max_dimmer_percentage = self.args["max_dimmer_percentage"]
+
             self._parm_load_max_power = self.args["load_max_power_w"]
+            if self._parm_load_max_power < 10:
+                raise Exception("Need reasonable value for LOAD_MAX_POWER_W (> 10).")
+
+            try:
+                self._parm_dim_max_power = self.args["dim_max_power"]
+                if (self._parm_dim_max_power <10) or (self._parm_dim_max_power > self._parm_load_max_power):
+                    raise Exception(f"Need reasonable value for 'dim_max_power' (> 10 and not more than {self._parm_load_max_power}).")
+            except Exception:
+                    self._parm_dim_max_power = self._parm_load_max_power
+
             self._parm_gridpower_bias = self.args["gridpower_bias_w"]
             self._parm_mqtt_topic_dimmer_root = self.args["mqtt_topic_dimmer_root"]
             self._parm_mqtt_topic_dimmer_power = self.args["mqtt_topic_dimmer_power"]
@@ -72,6 +81,11 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
             self._parm_mqtt_topic_routermode = self.args["mqtt_topic_routermode"]
             self._parm_mqtt_topic_router_online = self.args["mqtt_topic_router_online"]
             
+            try:
+                self._parm_mqtt_topic_dim_max_power = self.args["mqtt_topic_dim_max_power"]
+            except Exception:
+                self._parm_mqtt_topic_dim_max_power = ""
+
             try:
                 pf = self.args["regul_o_l_gain_raw"]
                 pflist = list(pf.split(","))
@@ -102,9 +116,7 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
 
     def on_message_routermode(self, event_name, data, kwargs):
         self._routermode.set_mode(data["payload"])
-        if not self._confirmed_routermode:
-            self.log(f"Got RouterMode: {self._routermode.current_mode}")
-            self._confirmed_routermode = True
+        self.log(f"Got RouterMode: {self._routermode.current_mode}")
 
     def on_mqtt_message_gridpower(self, event_name, data, kwargs):
         try:
@@ -124,17 +136,26 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
             self.log(f"Got gridpower: {self._gridpower.currentvalue}")
             self._confirmed_gridpower = True
 
+    def on_message_dim_max_power(self, event_name, data, kwargs):
+        try:
+            self._router.set_dim_max_power(float(data["payload"]))
+            self.log(f"Got {self._parm_mqtt_topic_dim_max_power} (MQTT): {float(data['payload'])}")
+        except Exception:
+            self.log(f"Got invalid MQTT payload for {self._parm_mqtt_topic_dim_max_power}")
+
     async def mqtt_router_online(self, is_online):
-        if self.is_client_connected():
-            if is_online:
-                _payload = "online"
-            else:
-                _payload = "offline"
+        if is_online:
+            _payload = "online"
+        else:
+            _payload = "offline"
+        try:
             await self.mqtt_publish(
                 topic=self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_router_online,
                 payload=_payload,
                 retain=True
                 )
+        except Exception:
+            pass
 
 # ============== main program ===================
     async def energy_router_loop(self, kwargs):
@@ -174,6 +195,14 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
 
         self._router = Router(self)
 
+        if len(self._parm_mqtt_topic_dim_max_power) > 0:
+            _topic = self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_dim_max_power
+            self.listen_event(
+                self.on_message_dim_max_power, "MQTT_MESSAGE",
+                topic=_topic,
+                namespace="mqtt")
+            await self.mqtt_subscribe(_topic, namespace="mqtt")
+
     # main loop
         while(True):
             await asyncio.sleep(1)
@@ -203,15 +232,18 @@ class EnergyRouter(hass.Hass, mqtt.Mqtt):
                 tick_gridpower += 1
 
     async def terminate(self):
-        if self._router is not None:
-            await self._router.switch_off()
-        await self.mqtt_router_online(False)
-        await self.mqtt_unsubscribe(self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_dimmer_online,
-            namespace="mqtt")
-        await self.mqtt_unsubscribe(self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_routermode,
-            namespace="mqtt")
-        if self._parm_mqtt_topic_gridpower is not None:
-            await self.mqtt_unsubscribe(self._parm_mqtt_topic_gridpower, namespace="mqtt")
+        if self._parm_go:
+            if self._router is not None:
+                await self._router.switch_off()
+            await self.mqtt_router_online(False)
+            await self.mqtt_unsubscribe(self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_dimmer_online,
+                namespace="mqtt")
+            await self.mqtt_unsubscribe(self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_routermode,
+                namespace="mqtt")
+            await self.mqtt_unsubscribe(self._parm_mqtt_topic_dimmer_root + "/" + self._parm_mqtt_topic_dim_max_power,
+                namespace="mqtt")
+            if self._parm_mqtt_topic_gridpower is not None:
+                await self.mqtt_unsubscribe(self._parm_mqtt_topic_gridpower, namespace="mqtt")
 
         self.log("Energy Router terminated.")
 
@@ -227,10 +259,11 @@ class Router:
     def __init__(self, parent):
         self._parent = parent
         self._routersum = 0
+        self._dim_max_power = self._parent._parm_load_max_power
         self.set_prop(parent._parm_regul_prop)
         self.set_integ(parent._parm_regul_integ)
+        self.set_dim_max_power(self._parent._parm_load_max_power)
         self.set_gridpower_bias(parent._parm_gridpower_bias)
-        self._maxdimmerpourcentage = parent._parm_max_dimmer_percentage
         self._cnt_publish_status = 0
         self._cnt_set_dimmer = 0
         self._last_dimpercent = -1
@@ -240,9 +273,14 @@ class Router:
 
     def set_integ(self, value):
         self._integ = value / self._parent._parm_load_max_power
+        self.set_dim_max_power(self._dim_max_power)
 
     def set_gridpower_bias(self, value):
         self._gridpower_bias = value
+
+    def set_dim_max_power(self, value):
+        self._rsummax = 100 * value / self._parent._parm_load_max_power / self._integ
+        self._dim_max_power = value
 
     async def set_power(self, routermode, gridpower):
         if not self._parent.DIMMER_IS_ONLINE:
@@ -264,10 +302,11 @@ class Router:
         else:
             diff = -gridpower + self._gridpower_bias
             self._routersum = self._routersum + diff
-
-            _rsummax = self._maxdimmerpourcentage / self._integ
+            if self._dim_max_power == self._parent._parm_load_max_power:
+                _rsummax = self._rsummax
+            else:
+                _rsummax = self._rsummax - diff
             self._routersum = inbetween(-100, self._routersum, _rsummax)
-
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
             _loadpercent = inbetween(0, pDiff + iDiff, 100)
@@ -296,16 +335,18 @@ class Router:
                 self._cnt_set_dimmer = CNT_MAX
 
             if self._cnt_set_dimmer >= CNT_MAX:
-                if self._parent.is_client_connected():
-                    dictPayload = {
-                        "dim_percent": percent,
-                        "power_estim": int(loadpercent * self._parent._parm_load_max_power / 100),
-                        }
+                dictPayload = {
+                    "dim_percent": percent,
+                    "power_estim": int(loadpercent * self._parent._parm_load_max_power / 100),
+                    }
+                try:
                     await self._parent.mqtt_publish(
                         topic=self._parent._parm_mqtt_topic_dimmer_root + "/" + self._parent._parm_mqtt_topic_dimmer_power,
                         payload=json.dumps(dictPayload))
                     self._cnt_set_dimmer = 0
                     self._last_dimpercent = percent
+                except Exception:
+                    pass
             else:
                 self._cnt_set_dimmer += 1
         except Exception as e:
@@ -323,14 +364,13 @@ class Router:
             }
         payload = json.dumps(dictPayload)
         try:
-            if self._parent.is_client_connected():
-                self._cnt_publish_status += 1
-                if self._cnt_publish_status % 10 == 0:
-                    self._cnt_publish_status = 0
-                    await self._parent.mqtt_publish(
-                        topic=self._parent._parm_mqtt_topic_dimmer_root + "/" + self._parent._parm_mqtt_topic_dimmer_status,
-                        payload=json.dumps(dictPayload))
-                    self._parent.log(f"status : {payload}")
+            self._cnt_publish_status += 1
+            if self._cnt_publish_status % 10 == 0:
+                self._cnt_publish_status = 0
+                await self._parent.mqtt_publish(
+                    topic=self._parent._parm_mqtt_topic_dimmer_root + "/" + self._parent._parm_mqtt_topic_dimmer_status,
+                    payload=json.dumps(dictPayload))
+                self._parent.log(f"status : {payload}")
         except Exception as e:
             self._parent.log(f"[exception] publish status: {e}")
 
@@ -355,7 +395,11 @@ class GridPower:
 
 # ================== RouterMode =====================
 class RouterMode:
-    # supported modes: -1 (Auto), 0 (off), 1..100 (constant value)
+# supported modes:
+#  -1 (Auto),
+#  0 (off),
+#  1..100 (constant value),
+#  -2..-100 (open loop gain measurement)
 
     def __init__(self, outerclass):
         self._hass = outerclass
@@ -376,7 +420,3 @@ class RouterMode:
     @property
     def in_auto_mode(self):
         return self._current_mode == self._ROUTERMODE_AUTO
-
-'''
-TBD
-'''
