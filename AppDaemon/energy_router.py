@@ -17,7 +17,7 @@ import asyncio
 import json
 import mqttapi as mqtt
 
-SCRIPT_VERSION = "2023.01.28"
+SCRIPT_VERSION = "2023.03.25"
 LOGLEVEL_DEBUG = "debug"
 
 tick_gridpower = 0
@@ -302,10 +302,10 @@ class Router:
         else:
             diff = -gridpower + self._gridpower_bias
             self._routersum = self._routersum + diff
-            if self._dim_max_power == self._parent._parm_load_max_power:
+            if self._dim_max_power >= self._parent._parm_load_max_power:
                 _rsummax = self._rsummax
             else:
-                _rsummax = self._rsummax - diff
+                _rsummax = self._rsummax - diff * self._prop / self._integ
             self._routersum = inbetween(-100, self._routersum, _rsummax)
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ

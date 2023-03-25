@@ -1,3 +1,8 @@
+2023.03.25
+- standalone py script: reliable MQTT connection establishment at system startup (was broken in previous version)
+- dimmer wiring schematics updated
+- minor fixes
+
 2023.01.29
 - new: dimmer power limit set via MQTT topic payload
 - change: MAX_PERCENTAGE parameter replaced by (optional) DIM_MAX_POWER_W parameter in [regul] section

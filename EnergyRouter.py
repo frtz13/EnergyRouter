@@ -24,7 +24,7 @@ import math
 # from collections import deque
 import paho.mqtt.client as mqtt
 
-SCRIPT_VERSION = "2023.01.28"
+SCRIPT_VERSION = "2023.03.25"
 
 CONFIG_FILE = "EnergyRouter.ini"
 CONFIGSECTION_ROUTER = "router"
@@ -155,7 +155,9 @@ def on_MQTTconnect(client, userdata, flags, rc):
     client.connection_rc = rc
     if rc == 0:
         client.connected_flag = True
-#        print("connected OK")
+        msg = "Connected to MQTT broker"
+        print(msg)
+        syslog.syslog(syslog.LOG_INFO, msg)
         try:
             client.publish(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_ONLINE, 0, retain=True)
 #            print("mqtt subscription")
@@ -194,30 +196,34 @@ def on_MQTTdisconnect(client, userdata, rc):
     client.connected_flag = False
 
 def MQTT_connect(client):
+    # returns True if we started the connection loop, False otherwise
+    # the connection loop will take care of reconnections
     client.on_connect = on_MQTTconnect
     client.on_disconnect = on_MQTTdisconnect
     client.on_message = on_message
-    client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
-    client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, on_message_routermode)
-    client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, on_message_dimmeronline)
-    if len(MQTT_TOPIC_DIM_MAX_POWER) > 0:
-        client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIM_MAX_POWER, on_message_dim_max_power)
     client.will_set(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_LWT, MQTT_PAYLOAD_OFFLINE, 0, retain=True)
     if len(MQTT_USERNAME) > 0:
         client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
     #    print("Connecting to broker ",MQTT_BROKER)
     try:
         client.connect(MQTT_BROKER, MQTT_PORT) #connect to broker
+        client.message_callback_add(MQTT_TOPIC_GRIDPOWER, on_message_gridpower)
+        client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_ROUTERMODE, on_message_routermode)
+        client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIMMER_ONLINE, on_message_dimmeronline)
+        if len(MQTT_TOPIC_DIM_MAX_POWER) > 0:
+            client.message_callback_add(MQTT_TOPIC_DIMMER_ROOT + "/" + MQTT_TOPIC_DIM_MAX_POWER, on_message_dim_max_power)
         client.loop_start()
     except Exception as e:
-        print(f"MQTT connection failed: {e}")
+        errMsg = f"MQTT connection failed: {e}. Will be retried."
+        print(errMsg)
+        syslog.syslog(syslog.LOG_WARNING, errMsg)
         return False
     timeout = time.time() + 5
     while client.connection_rc == -1: #wait in loop
         if time.time() > timeout:
             break
         time.sleep(1)
-    return client.connected_flag
+    return True
 
 def MQTT_terminate(client):
     try:
@@ -322,11 +328,11 @@ class Router:
             return
         else:
             diff = -gridpower + self._gridpower_bias
-            self._routersum = self._routersum + diff
-            if self._dim_max_power == LOAD_MAX_POWER:
+            self._routersum += diff
+            if self._dim_max_power >= LOAD_MAX_POWER:
                 _rsummax = self._rsummax
             else:
-                _rsummax = self._rsummax - diff
+                _rsummax = self._rsummax - diff * self._prop / self._integ
             self._routersum = inbetween(-100, self._routersum, _rsummax)
             pDiff = diff * self._prop
             iDiff = self._routersum * self._integ
@@ -437,7 +443,7 @@ class RouterMode:
 
 def read_regul():
     '''
-    Re regulation parameters once every 30s
+    Read regulation parameters once every 30s
     to avoid restart when experimenting
     '''
     global cnt_readregul
@@ -463,12 +469,12 @@ def check_gridpower_info():
         # we switch off router in auto mode without news from grid power
         if not router_off_no_gridpower_info:
             router_off_no_gridpower_info = True
-            msg = "[Timeout] No gridpower info. Router switched off."
+            msg = "[Timeout] No gridpower info. Dimmer switched off."
             print(msg)
             syslog.syslog(syslog.LOG_WARNING, msg)
     else:
         if router_off_no_gridpower_info:
-            msg = "Gridpower info available. Router switched on."
+            msg = "Gridpower info available. Dimmer switched on."
             print(msg)
             syslog.syslog(syslog.LOG_INFO, msg)
             router_off_no_gridpower_info = False
@@ -519,13 +525,23 @@ try:
     cnt_readregul = 0
     tick_gridpower = 0
     router_off_no_gridpower_info = None
-    MQTT_connect(MQTT_client)
+    MQTT_connection_loop_running = False
+    sleep_delay = 1
 
     while True:
         if termination_request:
             raise KeyboardInterrupt()
 
-        sleep(1)
+        sleep(sleep_delay)
+
+        if not MQTT_connection_loop_running:
+            MQTT_connection_loop_running = MQTT_connect(MQTT_client)
+            if MQTT_connection_loop_running:
+                sleep_delay = 1
+            else:
+                sleep_delay = 30 #avoid too many warnings at system start
+                continue
+
         read_regul()
 
         check_gridpower_info()
