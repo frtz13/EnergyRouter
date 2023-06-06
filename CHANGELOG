@@ -1,3 +1,7 @@
+2023.06.06
+- minor README edits
+- simplified wiring diagram
+
 2023.03.25
 - standalone py script: reliable MQTT connection establishment at system startup (was broken in previous version)
 - dimmer wiring schematics updated

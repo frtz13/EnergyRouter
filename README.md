@@ -21,7 +21,7 @@ Some **"always-on" computer** for running the Energy Router
 script. You will need one to run the MQTT broker, anyway.
 
 A **home automation system** interacting with the MQTT
-broker will be very helpful. This lets you control the operation of the whole thing. You will find some hints on how to do it with Home Asssistant.
+broker will be very helpful. This lets you control the operation of the whole thing. You will find some hints on how to do it with Home Asssistant in the [Wiki](https://github.com/frtz13/EnergyRouter/wiki).
 
 The **dimmer**. You will need some basic electronic skills to assemble
 it yourself. You will also need to program its ESP8266 micro controller with ESPHome, which is also available as an add-on for Home Assistant.
@@ -29,6 +29,8 @@ it yourself. You will also need to program its ESP8266 micro controller with ESP
 ![](./img/overview.png)
 
 Note (*): The preferred way for the energy meter communication is shown in the diagram. With Home Assistant, the Energy Router can also get energy meter readings from a Sensor state.
+
+If you do not use a home automation system, and do not already have an MQTT broker running, you may want to have a look at another project, using less prerequisites: the [Zero-Surplus-Dimmer](https://github.com/frtz13/zero-surplus-dimmer/).
 
 ## The Energy Router at work
 
@@ -38,4 +40,6 @@ The blue line corresponds to the power sent to the water heater (multiplied by -
 
 ![](./img/regulation.png)
 
-For more information how to put this together, please see the [wiki](https://github.com/frtz13/EnergyRouter/wiki).
+## How to assemble...
+
+For more information how to put this together, please see the [Wiki](https://github.com/frtz13/EnergyRouter/wiki).
